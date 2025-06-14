@@ -57,12 +57,33 @@ class VQAConfig:
 
 
 @dataclass
+class DatasetManagementConfig:
+    """Dataset management configuration."""
+
+    # Default paths
+    default_dataset_root: str = "./datasets"
+
+    # Dataset creation defaults
+    default_metadata_format: str = "jsonl"  # jsonl, csv, parquet
+    default_splits: List[str] = field(
+        default_factory=lambda: ["train", "test", "validation"]
+    )
+    copy_images: bool = True
+    auto_flush_threshold: int = 100
+
+    # Upload defaults
+    default_private: bool = False
+    auto_create_card: bool = True
+
+
+@dataclass
 class SynthDocConfig:
     """Main configuration class."""
 
     document: DocumentConfig = field(default_factory=DocumentConfig)
     augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
     vqa: VQAConfig = field(default_factory=VQAConfig)
+    dataset: DatasetManagementConfig = field(default_factory=DatasetManagementConfig)
 
     # Logging
     log_level: str = "INFO"
@@ -91,6 +112,13 @@ class SynthDocConfig:
                 "default_question_types": self.vqa.default_question_types,
                 "hard_negative_ratio": self.vqa.hard_negative_ratio,
                 "questions_per_document": self.vqa.questions_per_document,
+            },
+            "dataset": {
+                "default_dataset_root": self.dataset.default_dataset_root,
+                "default_metadata_format": self.dataset.default_metadata_format,
+                "default_splits": self.dataset.default_splits,
+                "copy_images": self.dataset.copy_images,
+                "auto_flush_threshold": self.dataset.auto_flush_threshold,
             },
             "log_level": self.log_level,
             "max_workers": self.max_workers,
