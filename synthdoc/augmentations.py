@@ -8,21 +8,23 @@ visual transformations, noise addition, and layout modifications.
 from typing import List, Dict, Any, Optional, Tuple
 import logging
 from enum import Enum
-
+import numpy as np 
+import random
+from PIL import Image, ImageEnhance, ImageFilter
 
 class AugmentationType(Enum):
     """Available augmentation techniques."""
 
     ROTATION = "rotation"
-    SCALING = "scaling"
-    CROPPING = "cropping"
+    # SCALING = "scaling"
+    # CROPPING = "cropping"
     NOISE = "noise"
     BRIGHTNESS = "brightness"
     CONTRAST = "contrast"
     BLUR = "blur"
-    PERSPECTIVE = "perspective"
-    ELASTIC = "elastic"
-    COLOR_SHIFT = "color_shift"
+    # PERSPECTIVE = "perspective"
+    # ELASTIC = "elastic"
+    # COLOR_SHIFT = "color_shift"
 
 
 class Augmentor:
@@ -32,83 +34,35 @@ class Augmentor:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.available_augmentations = [aug.value for aug in AugmentationType]
 
-    def apply_augmentations(
-        self,
-        documents: List[Dict[str, Any]],
-        augmentations: List[str],
-        intensity: float = 0.5,
-    ) -> List[Dict[str, Any]]:
-        """
-        Apply augmentations to a list of documents.
+    def apply_augmentations(self, image: Image.Image, augmentations: List[AugmentationType]) -> Image.Image:
+        """Apply image augmentations"""
+        if not augmentations:
+            return image 
+        
+        augmented_image = image.copy()
 
-        Args:
-            documents: List of documents to augment
-            augmentations: List of augmentation types to apply
-            intensity: Augmentation intensity (0.0 to 1.0)
+        for aug in augmentations:
+            if aug == AugmentationType.ROTATION:
+                angle = random.uniform(-3, 3)
+                augmented_image = augmented_image.rotate(angle, fillcolor='white', expand=True)
+            
+            elif aug == AugmentationType.NOISE:
+                np_img = np.array(augmented_image)
+                noise = np.random.normal(0, 5, np_img.shape).astype(np.uint8)
+                noisy_img = np.clip(np_img.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+                augmented_image = Image.fromarray(noisy_img)
+            
+            elif aug == AugmentationType.BLUR:
+                augmented_image = augmented_image.filter(ImageFilter.GaussianBlur(radius=0.3))
+            
+            elif aug == AugmentationType.BRIGHTNESS:
+                enhancer = ImageEnhance.Brightness(augmented_image)
+                factor = random.uniform(0.85, 1.15)
+                augmented_image = enhancer.enhance(factor)
+                
+            elif aug == AugmentationType.CONTRAST:
+                enhancer = ImageEnhance.Contrast(augmented_image)
+                factor = random.uniform(0.9, 1.1)
+                augmented_image = enhancer.enhance(factor)
 
-        Returns:
-            List of augmented documents
-        """
-        self.logger.info(
-            f"Applying {len(augmentations)} augmentations to {len(documents)} documents"
-        )
-
-        augmented_docs = []
-
-        for doc in documents:
-            for aug_type in augmentations:
-                if aug_type in self.available_augmentations:
-                    augmented_doc = self._apply_single_augmentation(
-                        doc, aug_type, intensity
-                    )
-                    augmented_docs.append(augmented_doc)
-                else:
-                    self.logger.warning(f"Unknown augmentation type: {aug_type}")
-
-        return augmented_docs
-
-    def _apply_single_augmentation(
-        self, document: Dict[str, Any], augmentation: str, intensity: float
-    ) -> Dict[str, Any]:
-        """Apply a single augmentation to a document."""
-        # TODO: Implement actual augmentation logic
-        augmented_doc = document.copy()
-        augmented_doc["augmentation"] = {
-            "type": augmentation,
-            "intensity": intensity,
-            "original_id": document.get("id"),
-        }
-
-        # Update document ID to reflect augmentation
-        original_id = document.get("id", "unknown")
-        augmented_doc["id"] = f"{original_id}_{augmentation}"
-
-        return augmented_doc
-
-    def apply_rotation(self, image: Any, angle: float) -> Any:
-        """Apply rotation augmentation."""
-        # TODO: Implement rotation
-        self.logger.debug(f"Applying rotation: {angle} degrees")
-        return image
-
-    def apply_scaling(self, image: Any, scale: float) -> Any:
-        """Apply scaling augmentation."""
-        # TODO: Implement scaling
-        self.logger.debug(f"Applying scaling: {scale}")
-        return image
-
-    def apply_noise(self, image: Any, noise_level: float) -> Any:
-        """Apply noise augmentation."""
-        # TODO: Implement noise addition
-        self.logger.debug(f"Applying noise: {noise_level}")
-        return image
-
-    def apply_perspective(self, image: Any, strength: float) -> Any:
-        """Apply perspective transformation."""
-        # TODO: Implement perspective transformation
-        self.logger.debug(f"Applying perspective: {strength}")
-        return image
-
-    def get_available_augmentations(self) -> List[str]:
-        """Get list of available augmentation types."""
-        return self.available_augmentations
+        return augmented_image

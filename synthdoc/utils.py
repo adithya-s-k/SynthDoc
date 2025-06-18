@@ -9,7 +9,11 @@ import logging
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
-
+from PIL import Image, ImageDraw 
+import io 
+from config import DocumentConfig
+import random
+import base64 
 
 def setup_logging(level: str = "INFO") -> logging.Logger:
     """
@@ -187,3 +191,82 @@ def merge_configs(
             merged[key] = value
 
     return merged
+
+
+
+def image_to_base64( image: Image.Image) -> str:
+    """Convert PIL image to base64 string"""
+    buffer = io.BytesIO()
+    image.save(buffer, format='PNG')
+    image_base64 = base64.b64encode(buffer.getvalue()).decode('ascii')
+    return image_base64
+
+
+
+
+def create_text_section(text: str, page_width: int, section_height: int, 
+                       start_y: int, font, title_font):
+    """Create text section as separate image"""
+    # Create image for text section
+    text_img = Image.new('RGB', (page_width, section_height), 'white')
+    draw = ImageDraw.Draw(text_img)
+    
+    margin = 60
+    line_height = 24
+    max_width = page_width - 2 * margin
+    
+    # Text wrapping (same logic as create_document_image)
+    words = text.split()
+    lines = []
+    current_line = []
+    
+    for word in words:
+        test_line = ' '.join(current_line + [word])
+        if font:
+            try:
+                bbox = draw.textbbox((0, 0), test_line, font=font)
+                line_width = bbox[2] - bbox[0]
+            except:
+                line_width = len(test_line) * 8
+        else:
+            line_width = len(test_line) * 8
+            
+        if line_width <= max_width:
+            current_line.append(word)
+        else:
+            if current_line:
+                lines.append(' '.join(current_line))
+                current_line = [word]
+            else:
+                lines.append(word)
+    
+    if current_line:
+        lines.append(' '.join(current_line))
+
+    # Draw text
+    y_position = 20  # Start from top of text section
+    text_coordinates = []
+    
+    for i, line in enumerate(lines):
+        if y_position > section_height - 40:
+            break
+            
+        current_font = title_font if i == 0 and title_font else font
+        
+        try:
+            if current_font:
+                draw.text((margin, y_position), line, fill='black', font=current_font)
+            else:
+                draw.text((margin, y_position), line, fill='black')
+        except Exception as e:
+            print(f"⚠️ Text rendering error: {e}")
+            continue
+        
+        y_position += line_height
+
+    layout_info = {
+        "text_coordinates": text_coordinates,
+        "total_lines": len(lines)
+    }
+    
+    return text_img, layout_info

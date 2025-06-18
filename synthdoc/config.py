@@ -4,17 +4,17 @@ Configuration settings for SynthDoc.
 This module contains default configuration values that can be overridden.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
-
+from augmentations import AugmentationType
 
 @dataclass
 class DocumentConfig:
     """Document generation configuration."""
 
-    default_language: str = "en"
-    max_pages_per_document: int = 10
-    default_prompt: str = "Generate diverse document content"
+    # default_language: str = "en"
+    # max_pages_per_document: int = 10
+    # default_prompt: str = "Generate diverse document content"
 
     # Image settings
     image_dpi: int = 300
@@ -24,6 +24,15 @@ class DocumentConfig:
     # Output settings
     output_format: str = "huggingface"
     save_intermediate: bool = True
+
+    language: str = 'en'
+    num_pages: int = 1
+    prompt: Optional[str] = None 
+    pdf_name: Optional[str] = None
+    augmentations: Optional[List[AugmentationType]] = None
+    # content_types: Optional[List[ContentType]] = None #need to fix this 
+    include_graphs: bool = False 
+    include_tables: bool = False  
 
 
 @dataclass
