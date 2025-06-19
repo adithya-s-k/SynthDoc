@@ -9,6 +9,7 @@ VQA datasets, and handwritten documents.
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
 import logging
+import time
 from abc import ABC, abstractmethod
 import litellm
 import os
@@ -16,7 +17,8 @@ import random
 from config import DocumentConfig
 from PIL import Image, ImageDraw
 from font import font, title_font
-from datasets import Dataset 
+from datasets import Dataset
+from huggingface_hub import login, HfApi, create_repo
 from augmentations import Augmentor, AugmentationType 
 from utils import image_to_base64
 from image_gen import create_document_image_with_content
@@ -38,12 +40,20 @@ class BaseGenerator(ABC):
 class DocumentGenerator:
     """Generator for raw document content using LLMs."""
 
-    def __init__(self, groq_api_key: str):
+    def __init__(self, groq_api_key: str, hf_token: Optional[str] = None):
         os.environ["GROQ_API_KEY"] = groq_api_key
         litellm.set_verbose = False 
         
-        # Set encoding for litellm
+        #Setencoding for litellm
         os.environ["PYTHONIOENCODING"] = "utf-8"
+        
+        # Setup Hugging Face authentication
+        self.hf_token = hf_token
+        if hf_token:
+            login(token=hf_token)
+            self.hf_api = HfApi()
+        else:
+            self.hf_api = None
 
         self.language_prompts = {
             'en': "Write a comprehensive, well-structured document about",
@@ -55,79 +65,188 @@ class DocumentGenerator:
         }
         self.augmentor = Augmentor()
 
-    def generate_text_content(self, config: DocumentConfig) -> str:
-        """Generate high-quality text content using LiteLLM + Groq"""
+    def enhance_prompt(self, original_prompt: str, num_pages: int, language: str) -> str:
+        """Enhance a simple prompt to generate enough content for multiple pages"""
         try:
-            if config.prompt:
-                topic = config.prompt
-            else:
-                topic = random.choice(self.topics)
+            enhancement_prompt = f"""
+            Take this topic: "{original_prompt}"
             
-            base_prompt = self.language_prompts.get(config.language, self.language_prompts['en'])
+            Create a comprehensive, detailed outline and expanded description that would be suitable for a {num_pages}-page professional document in {language}.
             
-            words_per_page = 300
-            target_words = config.num_pages * words_per_page
+            Please expand this into a rich, detailed prompt that includes:
+            - Multiple subtopics and sections
+            - Specific areas to cover in depth
+            - Examples and case studies to include
+            - Technical details and specifications
+            - Current trends and future implications
+            - Best practices and methodologies
+            - Challenges and solutions
+            - Comparative analysis where relevant
             
-            #ensures proper utf8 handling in prompt
-            full_prompt = f"""
-                {base_prompt} {topic}.
-
-                Create a professional document with the following requirements:
-                - Write approximately {target_words} words
-                - Include a clear title and section headings
-                - Use formal, academic tone
-                - Provide specific examples and case studies
-                - Include statistics or data where relevant
-                - Structure with introduction, main body, and conclusion
-                - Write in {config.language} language
-                - Make it informative and engaging for professionals in the field
-
-                Format the document with proper paragraphs and natural flow.
-                """
-
-            # Ensure messages are properly encoded
-            system_msg = f"You are an expert professional writer who creates high-quality, informative documents. Always write in {config.language} language with proper structure and formatting."
+            Return only the enhanced, expanded prompt that I can use to generate the full document.
+            """
             
-            # Try to encode/decode to ensure UTF-8 compatibility
-            try:
-                system_msg_bytes = system_msg.encode('utf-8')
-                full_prompt_bytes = full_prompt.encode('utf-8')
-                system_msg = system_msg_bytes.decode('utf-8')
-                full_prompt = full_prompt_bytes.decode('utf-8')
-            except UnicodeError:
-                print("⚠️ Unicode encoding issue in prompt")
-
             response = litellm.completion(
                 model="groq/llama3-8b-8192",
                 messages=[
-                    {"role": "system", "content": system_msg},
-                    {"role": "user", "content": full_prompt}
+                    {"role": "system", "content": "You are an expert content strategist who creates comprehensive document outlines."},
+                    {"role": "user", "content": enhancement_prompt}
                 ],
-                max_tokens=8000,
+                max_tokens=1000,
                 temperature=0.7
             )
             
-            content = response.choices[0].message.content
+            enhanced_prompt = response.choices[0].message.content.strip()
+            print(f"✅ Enhanced prompt: {enhanced_prompt[:100]}...")
+            time.sleep(3)  # Rate limit protection
             
-            # Ensure content is properly decoded
-            if isinstance(content, bytes):
-                content = content.decode('utf-8')
-            
-            content = content.strip()
-            
-            return content
+            return enhanced_prompt
             
         except Exception as e:
-            print(f"⚠️ API Error: {e}")
-            print(f"⚠️ Error type: {type(e)}")
-            # return self._generate_fallback_content(config, config.prompt or random.choice(self.topics))
+            print(f"⚠️ Prompt enhancement failed: {e}")
+            # Fallback: manually enhance the prompt
+            return f"""
+            {original_prompt} - A comprehensive analysis covering:
+            1. Introduction and background
+            2. Current state and market overview  
+            3. Technical specifications and requirements
+            4. Implementation strategies and best practices
+            5. Case studies and real-world applications
+            6. Challenges and solutions
+            7. Future trends and emerging technologies
+            8. Conclusion and recommendations
+            
+            Include detailed examples, statistics, and technical depth throughout.
+            """
 
+    def generate_text_content(self, config: DocumentConfig) -> str:
+        """Generate high-quality text content using LiteLLM + Groq with rate limiting"""
+        max_retries = 3
+        base_delay = 2 
+        
+        for attempt in range(max_retries):
+            try:
+                if config.prompt:
+                    topic = self.enhance_prompt(config.prompt, config.num_pages, config.language)
+                else:
+                    topic = random.choice(self.topics)
+                
+                base_prompt = self.language_prompts.get(config.language, self.language_prompts['en'])
+                
+                words_per_page = 300
+                target_words = config.num_pages * words_per_page
+                
+                full_prompt = f"""
+                    {base_prompt} {topic}.
+
+                    Create a professional document with the following requirements:
+                    - Write approximately {target_words} words
+                    - Include a clear title and section headings
+                    - Use formal, academic tone
+                    - Provide specific examples and case studies
+                    - Include statistics or data where relevant
+                    - Structure with introduction, main body, and conclusion
+                    - Write in {config.language} language
+                    - Make it informative and engaging for professionals in the field
+
+                    Format the document with proper paragraphs and natural flow.
+                    """
+
+                system_msg = f"You are an expert professional writer who creates high-quality, informative documents. Always write in {config.language} language with proper structure and formatting."
+                
+                #encode/decode to ensure UTF-8 compatibility
+                try:
+                    system_msg_bytes = system_msg.encode('utf-8')
+                    full_prompt_bytes = full_prompt.encode('utf-8')
+                    system_msg = system_msg_bytes.decode('utf-8')
+                    full_prompt = full_prompt_bytes.decode('utf-8')
+                except UnicodeError:
+                    print("⚠️ Unicode encoding issue in prompt")
+
+                #Add delay before API call
+                if attempt > 0:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    print(f"⏱️ Rate limit hit, waiting {delay} seconds before retry {attempt + 1}...")
+                    time.sleep(delay)
+                else:
+                    time.sleep(2) 
+
+                print(f"🤖 Generating content (attempt {attempt + 1}/{max_retries})...")
+                response = litellm.completion(
+                    model="groq/llama3-8b-8192",
+                    messages=[
+                        {"role": "system", "content": system_msg},
+                        {"role": "user", "content": full_prompt}
+                    ],
+                    max_tokens=8000,
+                    temperature=0.7
+                )
+                
+                content = response.choices[0].message.content
+                # Ensure content is properly decoded
+                if isinstance(content, bytes):
+                    content = content.decode('utf-8')
+                
+                content = content.strip()
+                
+                if content and len(content.strip()) > 50:  # Ensure we got meaningful content
+                    print(f"✅ Generated {len(content)} characters")
+                    return content
+                else:
+                    raise ValueError("Generated content too short or empty")
+                    
+            except Exception as e:
+                print(f"⚠️ API Error (attempt {attempt + 1}): {e}")
+                print(f"⚠️ Error type: {type(e)}")
+                
+                if attempt == max_retries - 1:  # Last attempt
+                    print("❌ All retries failed, using fallback content")
+                    # Return fallback content instead of failing completely
+                    fallback_content = f"""
+                    {topic}
+                    
+                    This document provides an overview of {topic}. Due to API limitations, this is fallback content.
+                    
+                    Introduction
+                    {topic} is an important subject that requires detailed analysis and understanding.
+                    The complexity of this topic necessitates a comprehensive approach to ensure proper coverage.
+                    
+                    Main Content
+                    The key aspects of {topic} include various elements that need to be considered carefully.
+                    This section would normally contain detailed information generated by AI, but due to rate limits,
+                    we are providing this comprehensive fallback content that still maintains professional quality.
+                    
+                    Technical Analysis
+                    From a technical perspective, {topic} involves multiple components that work together.
+                    Understanding these components is crucial for anyone working in this field.
+                    The implementation details often require careful consideration of various factors.
+                    
+                    Practical Applications
+                    In practical terms, {topic} has numerous applications across different domains.
+                    These applications demonstrate the versatility and importance of this subject area.
+                    Real-world implementations often reveal additional complexities not apparent in theoretical discussions.
+                    
+                    Future Considerations
+                    Looking ahead, {topic} continues to evolve with new developments and innovations.
+                    These advances promise to open new possibilities and applications.
+                    Staying current with these developments is essential for professionals in the field.
+                    
+                    Conclusion
+                    In conclusion, {topic} represents a significant area of study that warrants continued attention.
+                    Future research in this area would be beneficial for advancing our understanding.
+                    The insights gained from this analysis provide a solid foundation for further exploration.
+                    """
+                    return fallback_content * (config.num_pages // 2 + 1)  # Scale for page count
+                
+                # Wait before next attempt
+                time.sleep(base_delay * (attempt + 1))
+    
     def create_document_image(self, text: str, page_width: int = 800, page_height: int = 1000) -> tuple[Image.Image, dict]:
-        """Create a professional-looking document image with proper font support"""
+        """Create a professional-looking document image with detailed layout information"""
         img = Image.new('RGB', (page_width, page_height), 'white')
         draw = ImageDraw.Draw(img)
         margin = 60
-        line_height = 24  #Slightly more for nonLatin scripts
+        line_height = 24  #slightly more for nonLatin scripts
         max_width = page_width - 2 * margin
         
         #Better text wrapping with unicode support
@@ -142,7 +261,7 @@ class DocumentGenerator:
                     bbox = draw.textbbox((0, 0), test_line, font=font)
                     line_width = bbox[2] - bbox[0]
                 except Exception as e:
-                    # Fallback width calculation
+                    #Fallback width calculation
                     line_width = len(test_line) * 8  # Conservative estimate
             else:
                 line_width = len(test_line) * 8  # Approximate
@@ -159,9 +278,10 @@ class DocumentGenerator:
         if current_line:
             lines.append(' '.join(current_line))
 
-        # Draw text with better formatting
+        #Draw text with detailed coordinate tracking
         y_position = margin
         text_coordinates = []
+        word_bboxes = []
         
         for i, line in enumerate(lines):
             if y_position > page_height - margin - line_height:
@@ -174,43 +294,77 @@ class DocumentGenerator:
                 if current_font:
                     draw.text((margin, y_position), line, fill='black', font=current_font)
                 else:
-                    # Basic fallback - won't handle complex scripts well
+                    #Basic fallback
                     try:
-                        # Simple character-by-character rendering
                         x_offset = 0
                         for char in line:
                             try:
                                 draw.text((margin + x_offset, y_position), char, fill='black')
                                 x_offset += 8
                             except:
-                                # Skip problematic characters
                                 x_offset += 8
                                 continue
                     except:
-                        # Ultimate fallback
                         draw.text((margin, y_position), "Text rendering error", fill='black')
             except Exception as e:
                 print(f"⚠️ Text rendering error for line {i}: {e}")
                 continue
             
-            # Store text coordinates for each word
+            #store detailed coordinates for each word
+            x_offset = margin
             for word_idx, word in enumerate(line.split()):
-                text_coordinates.append({
+                # Calculate word width
+                if current_font:
+                    try:
+                        word_bbox = draw.textbbox((0, 0), word, font=current_font)
+                        word_width = word_bbox[2] - word_bbox[0]
+                        word_height = word_bbox[3] - word_bbox[1]
+                    except:
+                        word_width = len(word) * 8
+                        word_height = line_height
+                else:
+                    word_width = len(word) * 8
+                    word_height = line_height
+                
+                #store word information as in vivid dataset
+                word_info = {
                     "word": word,
-                    "x": margin + word_idx * 50,  # Approximate positioning
+                    "x": x_offset,
                     "y": y_position,
-                    "line": i
-                })
+                    "width": word_width,
+                    "height": word_height,
+                    "line": i,
+                    "word_in_line": word_idx,
+                    "bbox": [x_offset, y_position, x_offset + word_width, y_position + word_height]
+                }
+                text_coordinates.append(word_info)
+                word_bboxes.append(word_info["bbox"])
+                
+                x_offset += word_width + 8  #add space between words
             
             y_position += line_height
 
         layout_info = {
             "text_coordinates": text_coordinates,
+            "word_bboxes": word_bboxes,
             "layout_type": "single_column",
             "page_dimensions": {"width": page_width, "height": page_height},
             "margins": {"top": margin, "bottom": margin, "left": margin, "right": margin},
             "line_height": line_height,
-            "total_lines": len(lines)
+            "total_lines": len(lines),
+            "total_words": len(text_coordinates),
+            "text_regions": [
+                {
+                    "type": "text_block",
+                    "bbox": [margin, margin, page_width - margin, y_position],
+                    "content": text[:500] + "..." if len(text) > 500 else text
+                }
+            ],
+            "font_info": {
+                "main_font": str(font) if font else "default",
+                "title_font": str(title_font) if title_font else "default",
+                "font_size": 12
+            }
         }
 
         return img, layout_info
@@ -261,20 +415,24 @@ class DocumentGenerator:
             
             # Add unique page header
             page_text = f"Page {page_num + 1} - Section {page_num + 1}\n\n{page_text}"
-            
-            # Create page image with unique content
-            page_img, layout_info = create_document_image_with_content(
+              #create page image with unique content using advanced layout
+            from image_gen import create_multicolumn_document_image
+            page_img, layout_info = create_multicolumn_document_image(
                     page_text, config, page_num, used_graph_types, used_table_types
-                )
-              # Apply augmentations
+                )            # Apply augmentations
             if config.augmentations:
                 page_img = self.augmentor.apply_augmentations(page_img, config.augmentations)
             
             pages.append({
-                'image': image_to_base64(page_img),
+                'image': page_img,  #or it will display bunch of encoded text keep as PIL Image for HuggingFace
+                'image_base64': image_to_base64(page_img),  #yep also keep base64 for compatibility
                 'text': page_text,
-                'page_number': page_num,
-                'layout_info': layout_info
+                'page_number': page_num + 1,
+                'layout_info': layout_info,
+                'layout_type': config.layout_type.value,
+                'language': config.language,
+                'has_graphs': config.include_graphs,
+                'has_tables': config.include_tables
             })
         
         return pages
@@ -322,10 +480,11 @@ class DocumentGenerator:
             documents.append(doc)
         
         return documents
-    
-
-    def generate_dataset(self, configs: List[DocumentConfig]) -> Dataset:
-        """Generate HuggingFace dataset"""
+    def generate_dataset(self, configs: List[DocumentConfig], auto_upload: bool = False,
+                         repo_name: Optional[str] = None,
+                         repo_description: str = "Synthetic document dataset",
+                         private: bool = False) -> Dataset:
+        """Generate HuggingFace dataset with rate limiting"""
         documents = []
         
         print(f"🚀 Starting generation of {len(configs)} documents...")
@@ -333,6 +492,12 @@ class DocumentGenerator:
         for i, config in enumerate(configs, 1):
             try:
                 print(f"📄 Processing document {i}/{len(configs)}")
+                
+                # Add delay between documents to avoid rate limits
+                if i > 1:
+                    print("⏱️ Adding delay to avoid rate limits...")
+                    time.sleep(3)  # 3 second delay between documents
+                
                 doc_pages = self.generate_document(config)
                 documents.extend(doc_pages)
                 print(f"✅ Document {i} completed ({len(doc_pages)} pages)")
@@ -352,7 +517,73 @@ class DocumentGenerator:
         
         # Create HuggingFace dataset
         dataset = Dataset.from_list(documents)
-        return dataset 
+        # Auto-upload if requested
+        if auto_upload and self.hf_token:
+            if not repo_name:
+                import datetime
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                repo_name = f"synthetic-docs-{timestamp}"
+            
+            try:
+                print(f"🚀 Auto-uploading to Hugging Face as '{repo_name}'...")
+                self.upload_to_huggingface(dataset, repo_name, repo_description, private)
+            except Exception as e:
+                print(f"❌ Auto-upload failed: {e}")
+        elif auto_upload and not self.hf_token:
+            print("⚠️ Auto-upload requested but no HF token provided during initialization")
+        
+        return dataset
+    def upload_to_huggingface(self, dataset: Dataset, repo_name: str, 
+                         repo_description: str = "Synthetic document dataset",
+                         private: bool = False) -> str:
+        """Upload dataset to Hugging Face Hub, appending to existing if it exists"""
+        if not self.hf_api:
+            raise ValueError("Hugging Face token not provided during initialization")
+        
+        try:
+            # Create repository if it doesn't exist
+            repo_url = create_repo(
+                repo_id=repo_name,
+                token=self.hf_token,
+                private=private,
+                exist_ok=True
+            )
+            
+            # Try to load existing dataset and append
+            try:
+                print(f"🔍 Checking if dataset '{repo_name}' already exists...")
+                existing_dataset = Dataset.from_hub(repo_name, token=self.hf_token)
+                print(f"📊 Found existing dataset with {len(existing_dataset)} entries")
+                
+                # Combine datasets
+                from datasets import concatenate_datasets
+                combined_dataset = concatenate_datasets([existing_dataset, dataset])
+                print(f"🔄 Combined dataset now has {len(combined_dataset)} entries")
+                
+                # Push combined dataset
+                combined_dataset.push_to_hub(
+                    repo_id=repo_name,
+                    token=self.hf_token,
+                    private=private
+                )
+                print(f"✅ Dataset appended successfully! Total entries: {len(combined_dataset)}")
+                
+            except Exception as load_error:
+                print(f"📝 No existing dataset found, creating new one...")
+                # Push new dataset
+                dataset.push_to_hub(
+                    repo_id=repo_name,
+                    token=self.hf_token,
+                    private=private
+                )
+                print(f"✅ New dataset uploaded successfully with {len(dataset)} entries")
+            
+            print(f"🌐 Dataset URL: {repo_url}")
+            return repo_url
+        
+        except Exception as e:
+            print(f"❌ Upload failed: {e}")
+            raise
 #Document generator ends
 ######################################################################################
 
