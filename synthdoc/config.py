@@ -7,6 +7,16 @@ This module contains default configuration values that can be overridden.
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from augmentations import AugmentationType
+from enum import Enum
+
+class LayoutType(Enum):
+    """Available document layout types."""
+    SINGLE_COLUMN = "single_column"
+    TWO_COLUMN = "two_column"
+    THREE_COLUMN = "three_column" 
+    ACADEMIC_PAPER = "academic_paper"  # Two column with title header
+    NEWSLETTER = "newsletter"  # Mixed column layout
+    SIDEBAR = "sidebar"  # Main content + sidebar
 
 @dataclass
 class DocumentConfig:
@@ -32,7 +42,8 @@ class DocumentConfig:
     augmentations: Optional[List[AugmentationType]] = None
     # content_types: Optional[List[ContentType]] = None #need to fix this 
     include_graphs: bool = False 
-    include_tables: bool = False  
+    include_tables: bool = False
+    layout_type: LayoutType = LayoutType.SINGLE_COLUMN  # New layout option
 
 
 @dataclass
