@@ -4,26 +4,29 @@ Document generators for different types of synthetic documents.
 This module contains generators for raw documents, layout-based documents,
 VQA datasets, and handwritten documents.
 """
-
-
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
 import logging
 import time
 from abc import ABC, abstractmethod
 import litellm
+import io
 import os
 import random
 from config import DocumentConfig
 from PIL import Image, ImageDraw
-from font import font, title_font
+from font import font, title_font,load_font
 from datasets import Dataset
 from huggingface_hub import login, HfApi, create_repo
 from augmentations import Augmentor, AugmentationType 
 from utils import image_to_base64
 from image_gen import create_document_image_with_content
-from tables import text_to_html, text_to_markdown
+from tables import text_to_html, text_to_markdown, parse_markdown_text
+import warnings
 
+# Suppress Pydantic serializer warnings for cleaner output
+warnings.filterwarnings("ignore", message=".*Pydantic serializer warnings.*")
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +49,18 @@ class DocumentGenerator:
         
         #Setencoding for litellm
         os.environ["PYTHONIOENCODING"] = "utf-8"
-        
-        # Setup Hugging Face authentication
+          # Setup Hugging Face authentication
         self.hf_token = hf_token
         if hf_token:
-            login(token=hf_token)
-            self.hf_api = HfApi()
+            try:
+                login(token=hf_token)
+                self.hf_api = HfApi()
+                print("✅ Hugging Face authentication successful")
+            except Exception as e:
+                print(f"⚠️ Hugging Face authentication failed: {e}")
+                print("   Continuing without HF integration...")
+                self.hf_api = None
+                self.hf_token = None
         else:
             self.hf_api = None
 
@@ -64,7 +73,40 @@ class DocumentGenerator:
             'sa': "अस्मिन् विषये व्यापकं सुसंस्कृतं च प्रलेखं लिखत"
         }
         self.augmentor = Augmentor()
+        
+        # Cost tracking
+        self.total_cost = 0.0
+        self.api_calls_count = 0
+        self.token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        
+        # Groq pricing (approximate, in USD per 1K tokens)
+        self.pricing = {
+            "groq/llama3-8b-8192": {"input": 0.00005, "output": 0.00008},
+            "groq/llama3-70b-8192": {"input": 0.00059, "output": 0.00079},
+            "groq/mixtral-8x7b-32768": {"input": 0.00024, "output": 0.00024}
+        }
 
+    def calculate_cost(self, model: str, prompt_tokens: int, completion_tokens: int) -> float:
+        """Calculate cost for API call based on token usage"""
+        if model in self.pricing:
+            input_cost = (prompt_tokens / 1000) * self.pricing[model]["input"]
+            output_cost = (completion_tokens / 1000) * self.pricing[model]["output"]
+            return input_cost + output_cost
+        return 0.0
+    
+    def get_cost_summary(self) -> dict:
+        """Get summary of costs and usage"""
+        return {
+            "total_cost_usd": round(self.total_cost, 6),
+            "total_api_calls": self.api_calls_count,
+            "total_tokens": self.token_usage["total_tokens"],
+            "prompt_tokens": self.token_usage["prompt_tokens"],
+            "completion_tokens": self.token_usage["completion_tokens"],
+            "cost_breakdown": {
+                "input_cost": round((self.token_usage["prompt_tokens"] / 1000) * 0.00005, 6),
+                "output_cost": round((self.token_usage["completion_tokens"] / 1000) * 0.00008, 6)
+            }
+        }
     def enhance_prompt(self, original_prompt: str, num_pages: int, language: str) -> str:
         """Enhance a simple prompt to generate enough content for multiple pages"""
         try:
@@ -82,8 +124,7 @@ class DocumentGenerator:
             - Best practices and methodologies
             - Challenges and solutions
             - Comparative analysis where relevant
-            
-            Return only the enhanced, expanded prompt that I can use to generate the full document.
+              Return only the enhanced, expanded prompt that I can use to generate the full document.
             """
             
             response = litellm.completion(
@@ -95,6 +136,23 @@ class DocumentGenerator:
                 max_tokens=1000,
                 temperature=0.7
             )
+            
+            # Track API usage and costs for prompt enhancement
+            self.api_calls_count += 1
+            if hasattr(response, 'usage') and response.usage:
+                prompt_tokens = response.usage.prompt_tokens
+                completion_tokens = response.usage.completion_tokens
+                
+                # Update token tracking
+                self.token_usage["prompt_tokens"] += prompt_tokens
+                self.token_usage["completion_tokens"] += completion_tokens
+                self.token_usage["total_tokens"] += prompt_tokens + completion_tokens
+                
+                # Calculate and track cost
+                cost = self.calculate_cost("groq/llama3-8b-8192", prompt_tokens, completion_tokens)
+                self.total_cost += cost
+                
+                print(f"💰 Prompt Enhancement Cost: ${cost:.6f}")
             
             enhanced_prompt = response.choices[0].message.content.strip()
             print(f"✅ Enhanced prompt: {enhanced_prompt[:100]}...")
@@ -153,8 +211,7 @@ class DocumentGenerator:
                     """
 
                 system_msg = f"You are an expert professional writer who creates high-quality, informative documents. Always write in {config.language} language with proper structure and formatting."
-                
-                #encode/decode to ensure UTF-8 compatibility
+                  # Encode/decode to ensure UTF-8 compatibility
                 try:
                     system_msg_bytes = system_msg.encode('utf-8')
                     full_prompt_bytes = full_prompt.encode('utf-8')
@@ -163,13 +220,13 @@ class DocumentGenerator:
                 except UnicodeError:
                     print("⚠️ Unicode encoding issue in prompt")
 
-                #Add delay before API call
+                # Add delay before API call
                 if attempt > 0:
                     delay = base_delay * (2 ** attempt)  # Exponential backoff
                     print(f"⏱️ Rate limit hit, waiting {delay} seconds before retry {attempt + 1}...")
                     time.sleep(delay)
                 else:
-                    time.sleep(2) 
+                    time.sleep(2)
 
                 print(f"🤖 Generating content (attempt {attempt + 1}/{max_retries})...")
                 response = litellm.completion(
@@ -181,6 +238,24 @@ class DocumentGenerator:
                     max_tokens=8000,
                     temperature=0.7
                 )
+                
+                # Track API usage and costs
+                self.api_calls_count += 1
+                if hasattr(response, 'usage') and response.usage:
+                    prompt_tokens = response.usage.prompt_tokens
+                    completion_tokens = response.usage.completion_tokens
+                    total_tokens = response.usage.total_tokens
+                    
+                    # Update token tracking
+                    self.token_usage["prompt_tokens"] += prompt_tokens
+                    self.token_usage["completion_tokens"] += completion_tokens
+                    self.token_usage["total_tokens"] += total_tokens
+                    
+                    # Calculate and track cost
+                    cost = self.calculate_cost("groq/llama3-8b-8192", prompt_tokens, completion_tokens)
+                    self.total_cost += cost
+                    
+                    print(f"💰 API Cost: ${cost:.6f} | Total: ${self.total_cost:.6f} | Tokens: {total_tokens}")
                 
                 content = response.choices[0].message.content
                 # Ensure content is properly decoded
@@ -234,117 +309,155 @@ class DocumentGenerator:
                     Conclusion
                     In conclusion, {topic} represents a significant area of study that warrants continued attention.
                     Future research in this area would be beneficial for advancing our understanding.
-                    The insights gained from this analysis provide a solid foundation for further exploration.
-                    """
+                    The insights gained from this analysis provide a solid foundation for further exploration.                    """
                     return fallback_content * (config.num_pages // 2 + 1)  # Scale for page count
                 
                 # Wait before next attempt
                 time.sleep(base_delay * (attempt + 1))
-    
+
     def create_document_image(self, text: str, page_width: int = 800, page_height: int = 1000) -> tuple[Image.Image, dict]:
         """Create a professional-looking document image with detailed layout information"""
+        clean_text, formatting = parse_markdown_text(text)
+
         img = Image.new('RGB', (page_width, page_height), 'white')
         draw = ImageDraw.Draw(img)
+
+        # Load different fonts
+        normal_font = font
+        bold_font = load_font(size=12, bold=True)
+        h1_font = load_font(size=24, bold=True)
+        h2_font = load_font(size=20, bold=True)
+        h3_font = load_font(size=16, bold=True)
+
         margin = 60
-        line_height = 24  #slightly more for nonLatin scripts
+        line_height = 24  # Slightly more for non-Latin scripts
         max_width = page_width - 2 * margin
         
-        #Better text wrapping with unicode support
-        words = text.split()
-        lines = []
-        current_line = []
-        
-        for word in words:
-            test_line = ' '.join(current_line + [word])
-            if font:
-                try:
-                    bbox = draw.textbbox((0, 0), test_line, font=font)
-                    line_width = bbox[2] - bbox[0]
-                except Exception as e:
-                    #Fallback width calculation
-                    line_width = len(test_line) * 8  # Conservative estimate
-            else:
-                line_width = len(test_line) * 8  # Approximate
-                
-            if line_width <= max_width:
-                current_line.append(word)
-            else:
-                if current_line:
-                    lines.append(' '.join(current_line))
-                    current_line = [word]
-                else:
-                    lines.append(word)
-        
-        if current_line:
-            lines.append(' '.join(current_line))
+        lines = clean_text.split('\n')
+        y_position = margin 
+        text_coordinates = []
 
-        #Draw text with detailed coordinate tracking
-        y_position = margin
+        for line_idx, line in enumerate(lines):
+            if y_position > page_height - margin - 50:
+                break 
+            line_formatting = formatting.get(line_idx, {})
+
+            if line_formatting.get('type') == 'heading':
+                level = line_formatting['level']
+                if level == 1:
+                    current_font = h1_font
+                    y_position += 10  # Extra space before heading
+                elif level == 2:
+                    current_font = h2_font
+                    y_position += 8 
+                else:
+                    current_font = h3_font
+                    y_position += 6
+
+                draw.text((margin, y_position), line, fill='black', font=current_font)
+                y_position += int(line_height * 1.5)
+                
+            elif line_formatting.get('type') in ['equation', 'inline_equation']:
+                try:
+                    eq_img = self.render_equation(line_formatting['equation'])
+                    img.paste(eq_img, (margin, y_position))
+                    y_position += eq_img.height + 10
+                except Exception as e:
+                    print(f"⚠️ Equation rendering error: {e}")
+                    draw.text((margin, y_position), f"[Equation: {line_formatting['equation']}]",
+                              fill='blue', font=normal_font)
+                    y_position += line_height
+                    
+            elif 'bold_spans' in line_formatting:
+                x_offset = margin 
+                current_pos = 0
+                
+                for span in line_formatting['bold_spans']:
+                    # Draw normal text before bold span
+                    if current_pos < span['start']:
+                        normal_text = line[current_pos:span['start']]
+                        if normal_text:
+                            draw.text((x_offset, y_position), normal_text, fill='black', font=normal_font)
+                            if normal_font:
+                                try:
+                                    bbox = draw.textbbox((0, 0), normal_text, font=normal_font)
+                                    x_offset += bbox[2] - bbox[0]
+                                except:
+                                    x_offset += len(normal_text) * 8
+                            else:
+                                x_offset += len(normal_text) * 8
+                    
+                    # Draw bold text
+                    bold_text = span['text']
+                    draw.text((x_offset, y_position), bold_text, fill='black', font=bold_font)
+                    if bold_font:
+                        try:
+                            bbox = draw.textbbox((0, 0), bold_text, font=bold_font)
+                            x_offset += bbox[2] - bbox[0]
+                        except:
+                            x_offset += len(bold_text) * 8
+                    else:
+                        x_offset += len(bold_text) * 8
+                    
+                    current_pos = span['end']
+                
+                # Draw remaining text after all bold spans
+                if current_pos < len(line):
+                    remaining_text = line[current_pos:]
+                    draw.text((x_offset, y_position), remaining_text, fill='black', font=normal_font)
+                
+                y_position += line_height
+            else:
+                # Regular text
+                draw.text((margin, y_position), line, fill='black', font=normal_font)
+                y_position += line_height        # Create detailed word coordinates for layout information
         text_coordinates = []
         word_bboxes = []
         
-        for i, line in enumerate(lines):
-            if y_position > page_height - margin - line_height:
+        # Process each line for word-level coordinates
+        current_y = margin
+        for line_idx, line in enumerate(lines):
+            if current_y > page_height - margin - line_height:
                 break
                 
-            # Make first line larger (title)
-            current_font = title_font if i == 0 and title_font else font
-            
-            try:
-                if current_font:
-                    draw.text((margin, y_position), line, fill='black', font=current_font)
-                else:
-                    #Basic fallback
-                    try:
-                        x_offset = 0
-                        for char in line:
-                            try:
-                                draw.text((margin + x_offset, y_position), char, fill='black')
-                                x_offset += 8
-                            except:
-                                x_offset += 8
-                                continue
-                    except:
-                        draw.text((margin, y_position), "Text rendering error", fill='black')
-            except Exception as e:
-                print(f"⚠️ Text rendering error for line {i}: {e}")
-                continue
-            
-            #store detailed coordinates for each word
             x_offset = margin
             for word_idx, word in enumerate(line.split()):
-                # Calculate word width
-                if current_font:
-                    try:
-                        word_bbox = draw.textbbox((0, 0), word, font=current_font)
+                if not word.strip():  # Skip empty words
+                    continue
+                
+                # Calculate word dimensions
+                try:
+                    if normal_font:
+                        word_bbox = draw.textbbox((0, 0), word, font=normal_font)
                         word_width = word_bbox[2] - word_bbox[0]
                         word_height = word_bbox[3] - word_bbox[1]
-                    except:
+                    else:
                         word_width = len(word) * 8
                         word_height = line_height
-                else:
+                except:
                     word_width = len(word) * 8
                     word_height = line_height
                 
-                #store word information as in vivid dataset
+                # Store word information
                 word_info = {
                     "word": word,
                     "x": x_offset,
-                    "y": y_position,
+                    "y": current_y,
                     "width": word_width,
                     "height": word_height,
-                    "line": i,
+                    "line": line_idx,
                     "word_in_line": word_idx,
-                    "bbox": [x_offset, y_position, x_offset + word_width, y_position + word_height]
+                    "bbox": [x_offset, current_y, x_offset + word_width, current_y + word_height]
                 }
                 text_coordinates.append(word_info)
                 word_bboxes.append(word_info["bbox"])
                 
-                x_offset += word_width + 8  #add space between words
+                x_offset += word_width + 8  # Add space between words
             
-            y_position += line_height
+            current_y += line_height
 
         layout_info = {
+            "formatting": formatting,
             "text_coordinates": text_coordinates,
             "word_bboxes": word_bboxes,
             "layout_type": "single_column",
@@ -353,10 +466,13 @@ class DocumentGenerator:
             "line_height": line_height,
             "total_lines": len(lines),
             "total_words": len(text_coordinates),
+            "has_equations": any(f.get('type') in ['equation', 'inline_equation'] for f in formatting.values()),
+            "has_headings": any(f.get('type') == 'heading' for f in formatting.values()),
+            "has_bold": any('bold_spans' in f for f in formatting.values()),
             "text_regions": [
                 {
                     "type": "text_block",
-                    "bbox": [margin, margin, page_width - margin, y_position],
+                    "bbox": [margin, margin, page_width - margin, current_y],
                     "content": text[:500] + "..." if len(text) > 500 else text
                 }
             ],
@@ -368,7 +484,41 @@ class DocumentGenerator:
         }
 
         return img, layout_info
-    
+
+    def render_equation(self, equation: str, font_size: int = 14):
+        """Render mathematical equation as image"""
+        try:
+            import matplotlib.pyplot as plt 
+            from matplotlib import rcParams
+
+            # Configure matplotlib for LaTeX rendering
+            rcParams['text.usetex'] = False  # Set to False to avoid LaTeX dependency
+            rcParams['font.size'] = font_size
+
+            fig = plt.figure(figsize=(6, 1), dpi=120, facecolor='white')
+            fig.text(0.5, 0.5, f"${equation}$", horizontalalignment='center', 
+                    verticalalignment='center', fontsize=font_size)
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', bbox_inches='tight',
+                       transparent=True, dpi=120, facecolor='white')
+
+            buf.seek(0)
+            eq_img = Image.open(buf)
+            plt.close(fig)
+
+            return eq_img
+        except Exception as e:
+            print(f"⚠️ Equation rendering failed: {e}")
+            # Fallback: create simple text image
+            from PIL import ImageFont
+            img = Image.new('RGB', (200, 30), 'white')
+            draw = ImageDraw.Draw(img)
+            try:
+                draw.text((5, 5), f"Equation: {equation}", fill='black')
+            except:
+                draw.text((5, 5), f"Equation: [LaTeX]", fill='black')
+            return img
 
     def generate_pages(self, text: str, config: DocumentConfig) -> List[Dict]:
         """Generate multiple pages from text content"""
@@ -446,36 +596,170 @@ class DocumentGenerator:
         
         # Generate multiple pages
         pages = self.generate_pages(text_content, config)
-        
-        # Create document entries for each page
+          # Create document entries for each page
         documents = []
         pdf_name = config.pdf_name or f"document_{config.language}_{random.randint(10000, 99999)}.pdf"
         
         for page_data in pages:
             html_content = text_to_html(page_data['text'], config, page_data['page_number'])
             markdown_content = text_to_markdown(page_data['text'], config, page_data['page_number'])
-            doc = {
-                'image': page_data['image'],
-                'text': page_data['text'],
-                'html': html_content,  
-                'markdown': markdown_content,
-                'pdf_name': pdf_name,
-                'language': config.language,
-                'page_number': page_data['page_number'],
-                'total_pages': config.num_pages,  
-                'word_count': len(page_data['text'].split()),
-                'layout_info': page_data['layout_info'],
-                'augmentations': [aug.value for aug in config.augmentations] if config.augmentations else [],
-                'metadata': {
-                    'page_size': "800x1000",
-                    'num_pages': config.num_pages,
-                    'generation_method': 'synthetic',
-                    'topic': config.prompt,
-                    'has_graphs': config.include_graphs,
-                    'has_tables': config.include_tables,
-                    'has_html': True,  
-                    'has_markdown': True
+            
+            # Extract comprehensive layout information
+            layout_info = page_data.get('layout_info', {})
+            
+            # Create detailed lines structure
+            lines_data = []
+            if 'text_coordinates' in layout_info:
+                for word_info in layout_info['text_coordinates']:
+                    lines_data.append({
+                        "text": word_info.get('word', ''),
+                        "bbox": word_info.get('bbox', [0, 0, 0, 0]),
+                        "line_index": word_info.get('line_index', 0),
+                        "confidence": word_info.get('score', 1.0)
+                    })
+              # Create images structure for embedded images
+            images_data = []
+            visual_elements = layout_info.get('visual_elements', {})
+            
+            # Add tracked AI images
+            for img_info in visual_elements.get('images', []):
+                images_data.append({
+                    "type": img_info.get('type', 'image'),
+                    "bbox": [
+                        img_info.get('position', {}).get('x', 0),
+                        img_info.get('position', {}).get('y', 0),
+                        img_info.get('position', {}).get('x', 0) + img_info.get('size', {}).get('width', 400),
+                        img_info.get('position', {}).get('y', 0) + img_info.get('size', {}).get('height', 300)
+                    ],
+                    "description": img_info.get('description', f"Image for page {page_data['page_number']}"),
+                    "title": img_info.get('title', 'Untitled Image'),
+                    "confidence": 0.95
+                })
+            
+            # Create equations structure from detected equations
+            equations_data = []
+            for eq_info in visual_elements.get('equations', []):
+                equations_data.append({
+                    "type": eq_info.get('type', 'mathematical'),
+                    "content": eq_info.get('content', ''),
+                    "description": eq_info.get('description', 'Mathematical equation'),
+                    "symbol": eq_info.get('symbol', ''),
+                    "confidence": 0.95
+                })
+              # Create tables structure from tracked tables
+            tables_data = []
+            for table_info in visual_elements.get('tables', []):
+                tables_data.append({
+                    "type": table_info.get('type', 'data_table'),
+                    "bbox": [
+                        table_info.get('position', {}).get('x', 60),
+                        table_info.get('position', {}).get('y', 300),
+                        table_info.get('position', {}).get('x', 60) + table_info.get('size', {}).get('width', 500),
+                        table_info.get('position', {}).get('y', 300) + table_info.get('size', {}).get('height', 150)
+                    ],
+                    "rows": table_info.get('rows', 0),
+                    "columns": table_info.get('columns', 0),
+                    "title": table_info.get('title', 'Data Table'),
+                    "description": table_info.get('description', 'Table with data'),
+                    "confidence": 0.95
+                })
+            
+            # Convert to string format as expected by the dataset
+            tables_data_str = str(tables_data) if tables_data else "[]"
+            
+            # Create comprehensive layout detection data
+            base_layout_detection = {
+                "page_layout": {
+                    "type": layout_info.get('layout_type', 'single_column'),
+                    "columns": layout_info.get('columns', 1),
+                    "margin": layout_info.get('margins', {"top": 60, "bottom": 60, "left": 60, "right": 60}),
+                    "header_height": layout_info.get('header_height', 80),
+                    "footer_height": layout_info.get('footer_height', 40)
+                },
+                "text_regions": layout_info.get('text_regions', []),                "visual_elements": {
+                    "graphs": layout_info.get('visual_elements', {}).get('graphs', []),
+                    "tables": layout_info.get('visual_elements', {}).get('tables', []),
+                    "images": layout_info.get('visual_elements', {}).get('images', []),
+                    "equations": layout_info.get('visual_elements', {}).get('equations', [])
+                },
+                "reading_order": list(range(len(layout_info.get('text_coordinates', [])))),
+                "confidence_scores": {
+                    "overall": 0.95,
+                    "text_detection": 0.98,
+                    "layout_analysis": 0.92
                 }
+            }
+            
+            # Create detailed content list
+            content_list_data = []
+            if 'text_coordinates' in layout_info:
+                for i, word_info in enumerate(layout_info['text_coordinates']):
+                    content_list_data.append({
+                        "id": i + 1,
+                        "type": "text",
+                        "content": word_info.get('word', ''),
+                        "bbox": word_info.get('bbox', [0, 0, 0, 0]),
+                        "confidence": 0.95,
+                        "reading_order": i + 1
+                    })
+            
+            # Add visual elements to content list
+            if layout_info.get('has_graph', False):
+                content_list_data.append({
+                    "id": len(content_list_data) + 1,
+                    "type": "graph",
+                    "content": "Data visualization chart",
+                    "bbox": layout_info.get('graph_bbox', [200, 150, 600, 400]),
+                    "confidence": 0.90,
+                    "reading_order": len(content_list_data) + 1
+                })
+            
+            if layout_info.get('has_table', False):
+                content_list_data.append({
+                    "id": len(content_list_data) + 1,
+                    "type": "table",
+                    "content": "Data table with structured information",
+                    "bbox": layout_info.get('table_bbox', [60, 300, 500, 450]),
+                    "confidence": 0.92,
+                    "reading_order": len(content_list_data) + 1
+                })
+            
+            # Create PDF info structure
+            pdf_info_data = {
+                "filename": pdf_name,
+                "page_count": config.num_pages,
+                "page_size": {"width": layout_info.get('page_dimensions', {}).get('width', 800), 
+                              "height": layout_info.get('page_dimensions', {}).get('height', 1000)},
+                "creation_date": "2025-06-21",
+                "language": config.language,
+                "text_extraction_method": "synthetic_generation",
+                "layout_analysis_method": "rule_based",
+                "quality_score": 0.95,
+                "processing_metadata": {
+                    "ocr_engine": "synthetic",
+                    "layout_detector": "synthdoc_v1",
+                    "confidence_threshold": 0.8
+                }
+            }
+            
+            doc = {
+                'image': page_data['image'],  # PIL Image for HuggingFace
+                'imagewidth': layout_info.get('page_dimensions', {}).get('width', 800),
+                'pdf_name': pdf_name,
+                'page_number': page_data['page_number'] - 1,  # 0-indexed as in example
+                'markdown': markdown_content,
+                'html': html_content,
+                'layout': str(layout_info),  # Convert to string as in example
+                'lines': str(lines_data),  # Convert to string as in example  
+                'images': str(images_data),  # Convert to string as in example
+                'equations': str(equations_data),  # Convert to string as in example
+                'tables': tables_data_str,  # String format as in example
+                'page_size': f"{layout_info.get('page_dimensions', {}).get('width', 800)}x{layout_info.get('page_dimensions', {}).get('height', 1000)}",
+                'content_list': str(content_list_data),  # Convert to string as in example
+                'base_layout_detection': str(base_layout_detection),  # Convert to string as in example
+                'pdf_info': str(pdf_info_data),  # Convert to string as in example
+                'system_prompt': "Generate high-quality synthetic documents for training ML models",  # Fixed as in example
+                'response': page_data['text']  # The generated text content
             }
             documents.append(doc)
         
@@ -492,8 +776,7 @@ class DocumentGenerator:
         for i, config in enumerate(configs, 1):
             try:
                 print(f"📄 Processing document {i}/{len(configs)}")
-                
-                # Add delay between documents to avoid rate limits
+                  # Add delay between documents to avoid rate limits
                 if i > 1:
                     print("⏱️ Adding delay to avoid rate limits...")
                     time.sleep(3)  # 3 second delay between documents
@@ -507,13 +790,24 @@ class DocumentGenerator:
                 print(f"❌ Error type: {type(e)}")
                 import traceback
                 traceback.print_exc()
-                continue 
+                continue
 
         if not documents:
             print("❌ No documents were generated!")
             return None
             
         print(f"\n✅ Successfully generated {len(documents)} documents")
+        
+        # Display cost summary
+        cost_summary = self.get_cost_summary()
+        print(f"\n💰 COST SUMMARY:")
+        print(f"   • Total Cost: ${cost_summary['total_cost_usd']:.6f}")
+        print(f"   • API Calls: {cost_summary['total_api_calls']}")
+        print(f"   • Total Tokens: {cost_summary['total_tokens']:,}")
+        print(f"   • Prompt Tokens: {cost_summary['prompt_tokens']:,}")
+        print(f"   • Completion Tokens: {cost_summary['completion_tokens']:,}")
+        print(f"   • Input Cost: ${cost_summary['cost_breakdown']['input_cost']:.6f}")
+        print(f"   • Output Cost: ${cost_summary['cost_breakdown']['output_cost']:.6f}")
         
         # Create HuggingFace dataset
         dataset = Dataset.from_list(documents)

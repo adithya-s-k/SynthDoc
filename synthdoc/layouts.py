@@ -71,9 +71,13 @@ class LayoutManager:
                 'title_area': True,
                 'abstract_area': True
             },
-            
-            LayoutType.NEWSLETTER: {
-                'columns': 'mixed',  # Will be handled specially
+              LayoutType.NEWSLETTER: {
+                'columns': 2,  # Changed from 'mixed' to proper number
+                'column_width': (content_width - self.column_gap) // 2,
+                'column_positions': [
+                    self.margin,
+                    self.margin + (content_width - self.column_gap) // 2 + self.column_gap
+                ],
                 'header_height': 100,
                 'footer_height': 40,
                 'mixed_layout': True

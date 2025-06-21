@@ -365,6 +365,83 @@ def text_to_markdown  (text: str, config: DocumentConfig, page_num: int = 0) -> 
         
         return '\n'.join(markdown_content)
 
+def parse_markdown_text(text: str):
+    """Parse markdown text and extract formatting information"""
+    formatting = {}
+    lines = text.split('\n')
+    parsed_lines = []
+
+    for line_idx, line in enumerate(lines):
+        original_line = line
+        
+        # Process headings
+        if line.strip().startswith('#'):
+            heading_level = 0
+            temp_line = line.strip()
+            while temp_line.startswith('#'):
+                heading_level += 1
+                temp_line = temp_line[1:]
+            clean_heading = temp_line.strip()
+            formatting[line_idx] = {
+                'type': 'heading',
+                'level': heading_level,
+                'text': clean_heading
+            }
+            parsed_lines.append(clean_heading)
+            continue
+            
+        # Process equations
+        if '$' in line:
+            if line.strip().startswith('$$') and line.strip().endswith('$$'):
+                equation = line.strip()[2:-2]
+                formatting[line_idx] = {
+                    'type': 'equation',
+                    'equation': equation,
+                    'display': True
+                }
+                parsed_lines.append(f"[EQUATION: {equation}]")
+                continue 
+            elif '$' in line and line.count('$') >= 2:
+                # Inline equation
+                import re
+                equation_match = re.search(r'\$([^$]+)\$', line)
+                if equation_match:
+                    equation = equation_match.group(1)
+                    formatting[line_idx] = {
+                        'type': 'inline_equation',
+                        'equation': equation,
+                        'original': line
+                    }
+                    parsed_lines.append(line.replace(f'${equation}$', f'[EQUATION: {equation}]'))
+                    continue
+        
+        # Process bold text
+        if '**' in line:
+            import re 
+            bold_pattern = r'\*\*([^*]+)\*\*'
+            bold_matches = list(re.finditer(bold_pattern, line))
+
+            if bold_matches:
+                formatting[line_idx] = formatting.get(line_idx, {})
+                formatting[line_idx]['bold_spans'] = []
+
+                for match in bold_matches:
+                    formatting[line_idx]['bold_spans'].append({
+                        'start': match.start(),
+                        'end': match.end(),
+                        'text': match.group(1)
+                    })
+                # Remove bold markers for clean text
+                clean_line = re.sub(bold_pattern, r'\1', line)
+                parsed_lines.append(clean_line)
+                continue 
+        
+        # Regular text
+        parsed_lines.append(line)
+    
+    return '\n'.join(parsed_lines), formatting
+
+
 def text_to_html(text: str, config: DocumentConfig, page_num: int = 0) -> str:
     """Convert text content to HTML format"""
     lines = text.split('\n')
