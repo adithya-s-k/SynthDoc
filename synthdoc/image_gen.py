@@ -3,7 +3,7 @@ import torch
 from typing import List, Optional, Dict, Any 
 from PIL import Image, ImageDraw
 from collections import Counter
-from utils  import create_text_section
+from utils import create_text_section
 from config import DocumentConfig, LayoutType
 from layouts import LayoutManager
 import random
@@ -370,11 +370,16 @@ def create_multicolumn_document_image(text: str, config: DocumentConfig, page_nu
     
     # Create image
     img = Image.new('RGB', (page_width, page_height), 'white')
-    draw = ImageDraw.Draw(img)
-      # Load realistic fonts based on document type
-    from font import load_realistic_font
-    font = load_realistic_font(document_type, 12)  # Slightly smaller for realism
-    title_font = load_realistic_font(document_type, 16)  # Title font
+    draw = ImageDraw.Draw(img)      # Load realistic fonts based on document type and language
+    from font import load_realistic_font, load_font
+    
+    # Use Hindi-specific font if language is Hindi
+    if config.language == 'hi':
+        font = load_font(12)  # Hindi-specific font
+        title_font = load_font(16, bold=True)  # Hindi title font
+    else:
+        font = load_realistic_font(document_type, 12)  # Slightly smaller for realism
+        title_font = load_realistic_font(document_type, 16)  # Title font
       # Add page elements (headers, footers, etc.)
     layout_manager.add_page_elements(draw, layout_info, page_num, title_font, font, 
                                    title=config.prompt)
@@ -399,39 +404,49 @@ def create_multicolumn_document_image(text: str, config: DocumentConfig, page_nu
     
     current_y = content_start_y
     
-    # Add visual elements first (they take fixed space)
+    #Initialize visual elements tracking if not exists
+    if not hasattr(create_multicolumn_document_image, '_visual_elements'):
+        create_multicolumn_document_image._visual_elements = {
+            'graphs': [], 'tables': [], 'images': [], 'equations': []
+        }
+    
+    #OVer here we add visual elements first -> they take fixed space
     visual_elements_height = 0
     
     # Add AI-generated image
     if include_image and page_num > 0:
         try:
             ai_image = generate_contextual_image(text, config.language)
-            if ai_image:
-                # For multi-column, make image span across columns or fit in one
+            if ai_image:                # For multi-column, make image span across columns or fit in one
                 if config.layout_type in [LayoutType.TWO_COLUMN, LayoutType.THREE_COLUMN]:
-                    # Resize to fit single column width
-                    target_width = layout_info['column_width']
-                    aspect_ratio = ai_image.height / ai_image.width
-                    target_height = int(target_width * aspect_ratio)
-                    ai_image = ai_image.resize((target_width, target_height))
-                  # Center the image in first column or span across page
-                if config.layout_type == LayoutType.SINGLE_COLUMN:
-                    img_x = (page_width - ai_image.width) // 2
-                else:
-                    # Check if column_positions exists, if not fallback to margin
-                    if 'column_positions' in layout_info and layout_info['column_positions']:
-                        img_x = layout_info['column_positions'][0]
-                    else:
-                        img_x = layout_info.get('margin', 60)  # fallback to margin
+                    # Resize to fit within content width with proper margins
+                    max_width = page_width - 2 * layout_info.get('margin', 60)
+                    if ai_image.width > max_width:
+                        aspect_ratio = ai_image.height / ai_image.width
+                        target_width = max_width
+                        target_height = int(target_width * aspect_ratio)
+                        ai_image = ai_image.resize((target_width, target_height))
+                
+                # Always center images for better alignment
+                img_x = (page_width - ai_image.width) // 2
                 
                 img.paste(ai_image, (img_x, current_y))
-                current_y += ai_image.height + 20
-                visual_elements_height += ai_image.height + 20
-                  # Add caption
+                current_y += ai_image.height + 30  # Increased spacing
+                visual_elements_height += ai_image.height + 30
+                
+                #Track this AI image
+                create_multicolumn_document_image._visual_elements['images'].append({
+                    'type': 'ai_generated',
+                    'title': f"Generated Illustration {page_num}",
+                    'position': {'x': img_x, 'y': current_y - ai_image.height - 30},
+                    'size': {'width': ai_image.width, 'height': ai_image.height},
+                    'description': f"AI-generated illustration based on document content"
+                })
+                  # Add caption with proper spacing
                 caption = f"Figure {page_num}-A: Generated Illustration"
                 draw.text((img_x, current_y), caption, fill='black', font=font)
-                current_y += 30
-                visual_elements_height += 30
+                current_y += 50  # Increased spacing after caption
+                visual_elements_height += 50
         except Exception as e:
             print(f"⚠️ Error adding AI image: {e}")
             print(f"⚠️ Layout info keys: {list(layout_info.keys()) if layout_info else 'None'}")
@@ -457,45 +472,104 @@ def create_multicolumn_document_image(text: str, config: DocumentConfig, page_nu
             from tables import generate_sample_data_for_graph, create_advanced_graph
             graph_data, _ = generate_sample_data_for_graph(graph_type)
             graph_img = create_advanced_graph(graph_data, graph_type)
-            
-            # Resize graph for layout
-            if config.layout_type in [LayoutType.TWO_COLUMN, LayoutType.THREE_COLUMN]:
-                target_width = layout_info['column_width']
+              # Resize graph for proper alignment and fit
+            max_width = page_width - 2 * layout_info.get('margin', 60)
+            if graph_img.width > max_width:
                 aspect_ratio = graph_img.height / graph_img.width
+                target_width = max_width
                 target_height = int(target_width * aspect_ratio)
                 graph_img = graph_img.resize((target_width, target_height))
-              # Position graph
-            if config.layout_type == LayoutType.SINGLE_COLUMN:
-                graph_x = (page_width - graph_img.width) // 2
-            else:
-                # Place in second column if two-column, or span across if space allows
-                # Check if column_positions exists, if not fallback to margin
-                if 'column_positions' in layout_info and layout_info['column_positions']:
-                    graph_x = layout_info['column_positions'][-1] if len(layout_info['column_positions']) > 1 else layout_info['column_positions'][0]
-                else:
-                    graph_x = layout_info.get('margin', 60)  # fallback to margin
+            
+            # Always center graphs for better alignment
+            graph_x = (page_width - graph_img.width) // 2
             
             img.paste(graph_img, (graph_x, current_y))
             current_y += graph_img.height + 20
             visual_elements_height += graph_img.height + 20
             
-            # Add caption
+            # Track this graph
+            create_multicolumn_document_image._visual_elements['graphs'].append({
+                'type': graph_type,
+                'title': graph_data.get('title', f'{graph_type.title()} Chart'),
+                'position': {'x': graph_x, 'y': current_y - graph_img.height - 20},
+                'size': {'width': graph_img.width, 'height': graph_img.height},
+                'data_points': len(graph_data.get('data', [])),
+                'description': f"A {graph_type} chart showing {graph_data.get('title', 'data visualization')}"
+            })
+              # Add caption with proper spacing
             caption = f"Figure {page_num}: {graph_data['title']}"
             draw.text((graph_x, current_y), caption, fill='black', font=font)
-            current_y += 40
-            visual_elements_height += 40
+            current_y += 50  # Increased spacing after graph
+            visual_elements_height += 50
             
         except Exception as e:
             print(f"⚠️ Error adding graph: {e}")
-      # Calculate remaining space for text
+    
+    # Add table
+    if include_table and page_num > 0:
+        table_types = ["comparison", "timeline", "statistics", "pricing", "features"]
+        available_table_types = [t for t in table_types if t not in used_table_types]
+        
+        if not available_table_types:
+            available_table_types = table_types  # Reset if all used
+            used_table_types.clear()
+        
+        table_type = random.choice(available_table_types)
+        used_table_types.add(table_type)
+        
+        try:
+            from tables import generate_diverse_table_data, create_table_image
+            table_data = generate_diverse_table_data(table_type, config.language)
+            table_img = create_table_image(table_data, 500, 150)
+              # Resize table for proper alignment and fit
+            max_width = page_width - 2 * layout_info.get('margin', 60)
+            if table_img.width > max_width:
+                aspect_ratio = table_img.height / table_img.width
+                target_width = max_width
+                target_height = int(target_width * aspect_ratio)
+                table_img = table_img.resize((target_width, target_height))
+            
+            # Always center tables for better alignment
+            table_x = (page_width - table_img.width) // 2
+            
+            img.paste(table_img, (table_x, current_y))
+            current_y += table_img.height + 20
+            visual_elements_height += table_img.height + 20
+            
+            # Track this table
+            create_multicolumn_document_image._visual_elements['tables'].append({
+                'type': table_type,
+                'title': f"{table_type.title()} Table",
+                'position': {'x': table_x, 'y': current_y - table_img.height - 20},
+                'size': {'width': table_img.width, 'height': table_img.height},
+                'rows': len(table_data.get('data', [])),
+                'columns': len(table_data.get('headers', [])),
+                'description': f"A {table_type} table with {len(table_data.get('data', []))} rows and {len(table_data.get('headers', []))} columns"
+            })
+            
+            # Add table caption
+            caption = f"Table {page_num}: {table_type.title()} Overview"
+            draw.text((table_x, current_y), caption, fill='black', font=font)
+            current_y += 50  # Increased spacing after table
+            visual_elements_height += 50
+            
+        except Exception as e:
+            print(f"⚠️ Error adding table: {e}")
+    
+    # Calculate remaining space for text
     remaining_height = content_height - visual_elements_height
     
     # Initialize word coordinates storage
     if not hasattr(create_multicolumn_document_image, '_word_coords'):
         create_multicolumn_document_image._word_coords = []
+      # Now handle text in columns - use more relaxed space requirements
+    # Ensure text starts after visual elements with additional padding
+    text_start_y = max(current_y, content_start_y + visual_elements_height + 20)
+    remaining_height = (page_height - text_start_y - 
+                       layout_info.get('margin', 60) - layout_info.get('footer_height', 40))
     
-    # Now handle text in columns - use more relaxed space requirements
     if remaining_height > 50:  # Reduced from 100 to 50 for better space utilization
+        print(f"✅ Text rendering area: {remaining_height}px remaining, starting at y={text_start_y}")
         try:
             # Wrap text into columns
             columns_data = layout_manager.wrap_text_to_columns(text, layout_info, font, draw)
@@ -509,22 +583,23 @@ def create_multicolumn_document_image(text: str, config: DocumentConfig, page_nu
                 'width': layout_info.get('content_width', page_width - 120),
                 'type': 'main'
             }]
-        
-        # Render text in each column
+          # Render text in each column
         for col_idx, col_data in enumerate(columns_data):
-            text_y = current_y
+            text_y = text_start_y  # Use calculated text start position
             
             # Special styling for sidebar
             if col_data.get('type') == 'sidebar':
                 # Draw sidebar background
                 sidebar_bg = Image.new('RGBA', (col_data['width'] + 20, remaining_height), (240, 240, 240, 100))
-                img.paste(sidebar_bg, (col_data['x_position'] - 10, text_y), sidebar_bg)
-              # Render text lines with word-level coordinate tracking
+                img.paste(sidebar_bg, (col_data['x_position'] - 10, text_y), sidebar_bg)              # Render text lines with word-level coordinate tracking
             for line_idx, line in enumerate(col_data.get('text_lines', [])):
-                if text_y > page_height - layout_info.get('margin', 60) - layout_info.get('footer_height', 40) - 30:
+                # Check if we have enough space for this line
+                bottom_margin = layout_info.get('margin', 60) + layout_info.get('footer_height', 40)  
+                if text_y + 24 > page_height - bottom_margin:
+                    print(f"⚠️ Stopping text rendering at line {line_idx}, reached bottom margin")
                     break  # Stop if we reach bottom margin
                     
-                if not line.strip():  # Skip empty lines
+                if not line.strip():  # Skip empty lines but still advance position
                     text_y += 24
                     continue
                     
@@ -534,48 +609,53 @@ def create_multicolumn_document_image(text: str, config: DocumentConfig, page_nu
                     if col_data.get('type') == 'sidebar' and font:
                         # Would need smaller font here, for now just use regular
                         pass
-                      # Draw the line
-                    draw.text((col_data['x_position'], text_y), line, fill='black', font=current_font)
-                    
-                    # Track word-level coordinates for this line
-                    x_offset = col_data['x_position']
-                    words = line.split()
-                    
-                    for word_idx, word in enumerate(words):
-                        if not word.strip():  # Skip empty words
-                            continue
-                            
-                        # Calculate word dimensions
-                        if current_font:
-                            try:
-                                word_bbox = draw.textbbox((0, 0), word, font=current_font)
-                                word_width = word_bbox[2] - word_bbox[0]
-                                word_height = word_bbox[3] - word_bbox[1]
-                            except:
+                      # Check if text will fit before drawing
+                    if text_y + 24 <= page_height - bottom_margin:
+                        # Draw the line
+                        draw.text((col_data['x_position'], text_y), line, fill='black', font=current_font)
+                        
+                        # Track word-level coordinates for this line
+                        x_offset = col_data['x_position']
+                        words = line.split()
+                        
+                        for word_idx, word in enumerate(words):
+                            if not word.strip():  # Skip empty words
+                                continue
+                                
+                            # Calculate word dimensions
+                            if current_font:
+                                try:
+                                    word_bbox = draw.textbbox((0, 0), word, font=current_font)
+                                    word_width = word_bbox[2] - word_bbox[0]
+                                    word_height = word_bbox[3] - word_bbox[1]
+                                except:
+                                    word_width = len(word) * 8
+                                    word_height = 24
+                            else:
                                 word_width = len(word) * 8
                                 word_height = 24
-                        else:
-                            word_width = len(word) * 8
-                            word_height = 24
-                          # Store word coordinates for later use
-                        if not hasattr(create_multicolumn_document_image, '_word_coords'):
-                            create_multicolumn_document_image._word_coords = []
+                              # Store word coordinates for later use
+                            if not hasattr(create_multicolumn_document_image, '_word_coords'):
+                                create_multicolumn_document_image._word_coords = []
+                                
+                            create_multicolumn_document_image._word_coords.append({
+                                "type": "text",
+                                "content": word,
+                                "coordinates": [x_offset, text_y, x_offset + word_width, text_y + word_height],
+                                "score": 1.0,
+                                "index": len(create_multicolumn_document_image._word_coords) + 1,
+                                "column_index": col_idx,
+                                "line_index": line_idx,
+                                "word_in_line": word_idx,
+                                "page_number": page_num + 1,
+                                "word": word,
+                                "bbox": [x_offset, text_y, x_offset + word_width, text_y + word_height]
+                            })
                             
-                        create_multicolumn_document_image._word_coords.append({
-                            "type": "text",
-                            "content": word,
-                            "coordinates": [x_offset, text_y, x_offset + word_width, text_y + word_height],
-                            "score": 1.0,
-                            "index": len(create_multicolumn_document_image._word_coords) + 1,
-                            "column_index": col_idx,
-                            "line_index": line_idx,
-                            "word_in_line": word_idx,
-                            "page_number": page_num + 1,
-                            "word": word,
-                            "bbox": [x_offset, text_y, x_offset + word_width, text_y + word_height]
-                        })
-                        
-                        x_offset += word_width + 8  # Add space between words
+                            x_offset += word_width + 8  # Add space between words
+                    else:
+                        print(f"⚠️ Line {line_idx} would exceed page bounds, skipping")
+                        break
                         
                     text_y += 24  # line height
                     
@@ -596,14 +676,16 @@ def create_multicolumn_document_image(text: str, config: DocumentConfig, page_nu
         if not simple_lines:
             simple_lines = [text[:200] + "..." if len(text) > 200 else text]
         
-        text_y = current_y
+        text_y = text_start_y  # Use calculated text start position
         
         # Initialize word coordinates if not exists
         if not hasattr(create_multicolumn_document_image, '_word_coords'):
-            create_multicolumn_document_image._word_coords = []
-        
+            create_multicolumn_document_image._word_coords = []        
         for line_idx, line in enumerate(simple_lines):
-            if text_y > page_height - layout_info.get('margin', 60) - 30:
+            # More precise boundary check
+            bottom_boundary = page_height - layout_info.get('margin', 60) - layout_info.get('footer_height', 40)
+            if text_y + line_height > bottom_boundary:
+                print(f"⚠️ Stopping simple text at line {line_idx}, reached page boundary")
                 break
                 
             if line.strip():  # Only render non-empty lines
@@ -612,32 +694,37 @@ def create_multicolumn_document_image(text: str, config: DocumentConfig, page_nu
                     max_chars = int((page_width - 2 * margin) / 8)  # Rough character width estimate
                     display_line = line[:max_chars] + "..." if len(line) > max_chars else line
                     
-                    draw.text((margin, text_y), display_line, fill='black', font=font)
-                    
-                    # Store word coordinates for this line
-                    words = display_line.split()[:15]  # Limit words for performance
-                    x_offset = margin
-                    
-                    for word_idx, word in enumerate(words):
-                        if not word.strip():
-                            continue
-                            
-                        word_width = len(word) * 8  # Rough estimate
+                    # Double-check we won't overflow
+                    if text_y + line_height <= bottom_boundary:
+                        draw.text((margin, text_y), display_line, fill='black', font=font)
                         
-                        create_multicolumn_document_image._word_coords.append({
-                            "type": "text",
-                            "content": word,
-                            "coordinates": [x_offset, text_y, x_offset + word_width, text_y + line_height],
-                            "score": 1.0,
-                            "index": len(create_multicolumn_document_image._word_coords) + 1,
-                            "column_index": 0,
-                            "line_index": line_idx,
-                            "word_in_line": word_idx,
-                            "page_number": page_num + 1,
-                            "word": word,
-                            "bbox": [x_offset, text_y, x_offset + word_width, text_y + line_height]
-                        })
-                        x_offset += word_width + 8
+                        # Store word coordinates for this line
+                        words = display_line.split()[:15]  # Limit words for performance
+                        x_offset = margin
+                        
+                        for word_idx, word in enumerate(words):
+                            if not word.strip():
+                                continue
+                                
+                            word_width = len(word) * 8  # Rough estimate
+                            
+                            create_multicolumn_document_image._word_coords.append({
+                                "type": "text",
+                                "content": word,
+                                "coordinates": [x_offset, text_y, x_offset + word_width, text_y + line_height],
+                                "score": 1.0,
+                                "index": len(create_multicolumn_document_image._word_coords) + 1,
+                                "column_index": 0,
+                                "line_index": line_idx,
+                                "word_in_line": word_idx,
+                                "page_number": page_num + 1,
+                                "word": word,
+                                "bbox": [x_offset, text_y, x_offset + word_width, text_y + line_height]
+                            })
+                            x_offset += word_width + 8
+                    else:
+                        print(f"⚠️ Line would overflow page bounds, stopping at line {line_idx}")
+                        break
                         
                 except Exception as e:
                     print(f"⚠️ Compact text rendering error: {e}")

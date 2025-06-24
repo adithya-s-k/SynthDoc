@@ -13,7 +13,7 @@ from PIL import Image, ImageDraw
 import io 
 from config import DocumentConfig
 import random
-import base64 
+import base64
 
 def setup_logging(level: str = "INFO") -> logging.Logger:
     """
@@ -241,14 +241,15 @@ def create_text_section(text: str, page_width: int, section_height: int,
                 lines.append(word)
     
     if current_line:
-        lines.append(' '.join(current_line))
-
-    # Draw text
+        lines.append(' '.join(current_line))    # Draw text
     y_position = 20  # Start from top of text section
     text_coordinates = []
+    max_lines = (section_height - 40) // line_height  # Calculate max lines that fit
     
-    for i, line in enumerate(lines):
-        if y_position > section_height - 40:
+    for i, line in enumerate(lines[:max_lines]):  # Limit lines to fit in section
+        # Check if this line will fit
+        if y_position + line_height > section_height - 20:
+            print(f"⚠️ Stopping text at line {i}, reached section boundary")
             break
             
         current_font = title_font if i == 0 and title_font else font
@@ -258,6 +259,23 @@ def create_text_section(text: str, page_width: int, section_height: int,
                 draw.text((margin, y_position), line, fill='black', font=current_font)
             else:
                 draw.text((margin, y_position), line, fill='black')
+                
+            # Track word coordinates for this line
+            x_offset = margin
+            for word_idx, word in enumerate(line.split()):
+                if word.strip():
+                    word_width = len(word) * 8  # Rough estimate
+                    text_coordinates.append({
+                        "word": word,
+                        "x": x_offset,
+                        "y": y_position,
+                        "width": word_width,
+                        "height": line_height,
+                        "line": i,
+                        "word_in_line": word_idx
+                    })
+                    x_offset += word_width + 8
+                    
         except Exception as e:
             print(f"⚠️ Text rendering error: {e}")
             continue

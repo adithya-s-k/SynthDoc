@@ -330,7 +330,7 @@ def create_table_image  (table_data: dict, width: int = 500, height: int = 200):
     return img
 
 
-def text_to_markdown  (text: str, config: DocumentConfig, page_num: int = 0) -> str:
+def text_to_markdown(text: str, config: DocumentConfig, page_num: int = 0) -> str:
         """Convert text content to markdown format"""
         lines = text.split('\n')
         markdown_content = []

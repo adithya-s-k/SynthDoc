@@ -14,9 +14,9 @@ class LayoutType(Enum):
     SINGLE_COLUMN = "single_column"
     TWO_COLUMN = "two_column"
     THREE_COLUMN = "three_column" 
-    ACADEMIC_PAPER = "academic_paper"  # Two column with title header
-    NEWSLETTER = "newsletter"  # Mixed column layout
-    SIDEBAR = "sidebar"  # Main content + sidebar
+    ACADEMIC_PAPER = "academic_paper"  #two column with title header
+    NEWSLETTER = "newsletter"  #column layout
+    SIDEBAR = "sidebar"  #content + sidebar
 
 @dataclass
 class DocumentConfig:
@@ -43,7 +43,7 @@ class DocumentConfig:
     # content_types: Optional[List[ContentType]] = None #need to fix this 
     include_graphs: bool = False 
     include_tables: bool = False
-    layout_type: LayoutType = LayoutType.SINGLE_COLUMN  # New layout option
+    layout_type: LayoutType = LayoutType.SINGLE_COLUMN 
 
 
 @dataclass

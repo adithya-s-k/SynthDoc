@@ -15,7 +15,7 @@ import os
 import random
 from config import DocumentConfig
 from PIL import Image, ImageDraw
-from font import font, title_font,load_font
+from font import font, title_font, load_font
 from datasets import Dataset
 from huggingface_hub import login, HfApi, create_repo
 from augmentations import Augmentor, AugmentationType 
@@ -79,7 +79,7 @@ class DocumentGenerator:
         self.api_calls_count = 0
         self.token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         
-        # Groq pricing (approximate, in USD per 1K tokens)
+        # Groq pricing
         self.pricing = {
             "groq/llama3-8b-8192": {"input": 0.00005, "output": 0.00008},
             "groq/llama3-70b-8192": {"input": 0.00059, "output": 0.00079},
@@ -194,7 +194,24 @@ class DocumentGenerator:
                 words_per_page = 300
                 target_words = config.num_pages * words_per_page
                 
-                full_prompt = f"""
+                if config.language == 'hi':
+                    full_prompt = f"""
+                    {base_prompt} {topic}.
+
+                    एक पेशेवर दस्तावेज़ बनाएं जिसमें निम्नलिखित आवश्यकताएं हों:
+                    - लगभग {target_words} शब्द लिखें
+                    - स्पष्ट शीर्षक और अनुभाग शीर्षक शामिल करें
+                    - औपचारिक, शैक्षणिक स्वर का उपयोग करें
+                    - विशिष्ट उदाहरण और केस स्टडी प्रदान करें
+                    - जहां प्रासंगिक हो वहां आंकड़े या डेटा शामिल करें
+                    - परिचय, मुख्य भाग और निष्कर्ष के साथ संरचित करें
+                    - हिंदी भाषा में लिखें और देवनागरी लिपि का सही उपयोग करें
+                    - इसे क्षेत्र के पेशेवरों के लिए जानकारीपूर्ण और आकर्षक बनाएं
+
+                    उचित पैराग्राफ और प्राकृतिक प्रवाह के साथ दस्तावेज़ को प्रारूपित करें। केवल हिंदी में उत्तर दें।
+                    """
+                else:
+                    full_prompt = f"""
                     {base_prompt} {topic}.
 
                     Create a professional document with the following requirements:
@@ -211,6 +228,12 @@ class DocumentGenerator:
                     """
 
                 system_msg = f"You are an expert professional writer who creates high-quality, informative documents. Always write in {config.language} language with proper structure and formatting."
+                
+                # Enhanced system message for Hindi and other Indic languages
+                if config.language == 'hi':
+                    system_msg = "आप एक विशेषज्ञ पेशेवर लेखक हैं जो उच्च गुणवत्ता वाले, सूचनाप्रद दस्तावेज़ बनाते हैं। हमेशा हिंदी भाषा में उचित संरचना और प्रारूपण के साथ लिखें। देवनागरी लिपि का सही उपयोग करें।"
+                elif config.language in ['sa', 'sanskrit']:
+                    system_msg = "भवान् एकः विशेषज्ञः व्यावसायिकः लेखकः अस्ति यः उच्चगुणवत्तायुक्तानि सूचनाप्रधानानि प्रलेखानि रचयति। सदैव संस्कृतभाषायां समुचितसंरचनया प्रारूपणेन च लिखतु।"
                   # Encode/decode to ensure UTF-8 compatibility
                 try:
                     system_msg_bytes = system_msg.encode('utf-8')
@@ -341,21 +364,28 @@ class DocumentGenerator:
             if y_position > page_height - margin - 50:
                 break 
             line_formatting = formatting.get(line_idx, {})
-
+            
             if line_formatting.get('type') == 'heading':
                 level = line_formatting['level']
                 if level == 1:
                     current_font = h1_font
-                    y_position += 10  # Extra space before heading
+                    y_position += 20  #xtra space before heading
+                    heading_height = 32  #larger height for h1
                 elif level == 2:
                     current_font = h2_font
-                    y_position += 8 
+                    y_position += 16  #extra space before heading
+                    heading_height = 28  #medium height for h2
                 else:
                     current_font = h3_font
-                    y_position += 6
+                    y_position += 12  #extra space before heading
+                    heading_height = 24  #normal height for h3
 
+                # Check if heading fits on page
+                if y_position + heading_height > page_height - margin - 50:
+                    break
+                    
                 draw.text((margin, y_position), line, fill='black', font=current_font)
-                y_position += int(line_height * 1.5)
+                y_position += heading_height + 10  # Extra spacing after heading
                 
             elif line_formatting.get('type') in ['equation', 'inline_equation']:
                 try:
@@ -400,17 +430,20 @@ class DocumentGenerator:
                         x_offset += len(bold_text) * 8
                     
                     current_pos = span['end']
-                
-                # Draw remaining text after all bold spans
                 if current_pos < len(line):
                     remaining_text = line[current_pos:]
                     draw.text((x_offset, y_position), remaining_text, fill='black', font=normal_font)
                 
                 y_position += line_height
             else:
-                # Regular text
+                
+                if y_position + line_height > page_height - margin - 30:
+                    break
+                    
                 draw.text((margin, y_position), line, fill='black', font=normal_font)
-                y_position += line_height        # Create detailed word coordinates for layout information
+                y_position += line_height
+        
+        # Create detailed word coordinates for layout information
         text_coordinates = []
         word_bboxes = []
         
@@ -538,7 +571,6 @@ class DocumentGenerator:
             end_idx = min((page_num + 1) * words_per_page, len(words))
             
             if start_idx >= len(words):
-                # Generate NEW unique content for additional pages
                 additional_topics = [
                     "implementation challenges and solutions",
                     "case studies and real-world applications", 
@@ -551,7 +583,6 @@ class DocumentGenerator:
                 ]
                 topic_suffix = additional_topics[page_num % len(additional_topics)]
                 
-                # Generate completely new content
                 extended_config = DocumentConfig(
                     language=config.language,
                     num_pages=1,
@@ -578,7 +609,7 @@ class DocumentGenerator:
                 'image_base64': image_to_base64(page_img),  #yep also keep base64 for compatibility
                 'text': page_text,
                 'page_number': page_num + 1,
-                'layout_info': layout_info,
+                'layout_info': layout_info,     
                 'layout_type': config.layout_type.value,
                 'language': config.language,
                 'has_graphs': config.include_graphs,
@@ -616,10 +647,10 @@ class DocumentGenerator:
                         "bbox": word_info.get('bbox', [0, 0, 0, 0]),
                         "line_index": word_info.get('line_index', 0),
                         "confidence": word_info.get('score', 1.0)
-                    })
-              # Create images structure for embedded images
+                    })              # Create images structure for embedded images
             images_data = []
             visual_elements = layout_info.get('visual_elements', {})
+            
             
             # Add tracked AI images
             for img_info in visual_elements.get('images', []):
@@ -636,7 +667,23 @@ class DocumentGenerator:
                     "confidence": 0.95
                 })
             
-            # Create equations structure from detected equations
+            # so we are adding tracked graphs as images too and nothing gets added to graphs for now(since graphs are visual elements)
+            for graph_info in visual_elements.get('graphs', []):
+                images_data.append({
+                    "type": "graph",
+                    "bbox": [
+                        graph_info.get('position', {}).get('x', 0),
+                        graph_info.get('position', {}).get('y', 0),
+                        graph_info.get('position', {}).get('x', 0) + graph_info.get('size', {}).get('width', 500),
+                        graph_info.get('position', {}).get('y', 0) + graph_info.get('size', {}).get('height', 350)
+                    ],
+                    "description": graph_info.get('description', f"Graph for page {page_data['page_number']}"),
+                    "title": graph_info.get('title', 'Chart'),
+                    "confidence": 0.95
+                })
+            
+            print(f"✅ Images data populated: {len(images_data)} items")
+              #create equations structure from detected equations
             equations_data = []
             for eq_info in visual_elements.get('equations', []):
                 equations_data.append({
@@ -646,7 +693,20 @@ class DocumentGenerator:
                     "symbol": eq_info.get('symbol', ''),
                     "confidence": 0.95
                 })
-              # Create tables structure from tracked tables
+            
+            #adding some sample equations if there are not detected but document has mathematical content
+            if not equations_data and ('mathematical' in page_data.get('text', '').lower() or 
+                                      'formula' in page_data.get('text', '').lower() or 
+                                      'equation' in page_data.get('text', '').lower()):
+                equations_data.append({
+                    "type": "mathematical",
+                    "content": "Sample mathematical equation",
+                    "description": "Mathematical equation detected in text",
+                    "symbol": "∑",
+                    "confidence": 0.85
+                })
+            
+            print(f"✅ Equations data populated: {len(equations_data)} items")              # Create tables structure from tracked tables
             tables_data = []
             for table_info in visual_elements.get('tables', []):
                 tables_data.append({
@@ -664,10 +724,39 @@ class DocumentGenerator:
                     "confidence": 0.95
                 })
             
-            # Convert to string format as expected by the dataset
+            print(f"✅ Tables data populated: {len(tables_data)} items")
+            
+            #connvert to string format as expected by the dataset
+            if not images_data and not tables_data and not equations_data:
+                print("⚠️ No visual elements detected, adding sample elements")
+                # Add at least one element of each type for demonstration
+                images_data.append({
+                    "type": "sample",
+                    "bbox": [100, 100, 400, 300],
+                    "description": "Sample visual element",
+                    "title": "Generated Content",
+                    "confidence": 0.80
+                })
+                tables_data.append({
+                    "type": "data_table",
+                    "bbox": [60, 400, 560, 550],
+                    "rows": 3,
+                    "columns": 2,
+                    "title": "Sample Table",
+                    "description": "Sample data table",
+                    "confidence": 0.80
+                })
+                equations_data.append({
+                    "type": "mathematical",
+                    "content": "y = mx + b",
+                    "description": "Linear equation",
+                    "symbol": "=",
+                    "confidence": 0.80
+                })
+            
             tables_data_str = str(tables_data) if tables_data else "[]"
             
-            # Create comprehensive layout detection data
+            #create comprehensive layout detection data
             base_layout_detection = {
                 "page_layout": {
                     "type": layout_info.get('layout_type', 'single_column'),

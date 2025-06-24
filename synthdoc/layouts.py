@@ -72,7 +72,7 @@ class LayoutManager:
                 'abstract_area': True
             },
               LayoutType.NEWSLETTER: {
-                'columns': 2,  # Changed from 'mixed' to proper number
+                'columns': 2, 
                 'column_width': (content_width - self.column_gap) // 2,
                 'column_positions': [
                     self.margin,

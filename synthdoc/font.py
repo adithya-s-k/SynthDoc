@@ -111,12 +111,20 @@ if not font:
 
 #custom func, when hindi doesnt work etc. 
 def load_font(size: int = 14, bold: bool = False):
-    """Load appropriate font with better Hindi support"""
-    # Extended font paths with better Hindi support
+    """Load appropriate font with better Hindi support"""    #xtended font paths with better hindi support
     font_paths = [
-        # Windows Hindi fonts (better support)
+        # Local project Hindi fonts (first priority)
+        "synthdoc/fonts/hi/NotoSansDevanagari-Regular.ttf",
+        "synthdoc/fonts/hi/NotoSerifDevanagari-Regular.ttf", 
+        "synthdoc/fonts/hi/AnnapurnaSIL-Regular.ttf",
+        "synthdoc/fonts/hi/Kalam-Regular.ttf",
+        "synthdoc/fonts/hi/JainiPurva-Regular.ttf",
+        #windows Hindi fonts (better support)
         "C:/Windows/Fonts/mangal.ttf",      # Primary Hindi font
         "C:/Windows/Fonts/NotoSansDevanagari-Regular.ttf",  # Google Noto
+        # Additional system fonts
+        "C:/Windows/Fonts/utsaah.ttf",      # Hindi Unicode font
+        "C:/Windows/Fonts/aparaj.ttf",      # Hindi font
     ]
     
     # Add bold versions if requested
