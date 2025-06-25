@@ -59,6 +59,13 @@ class LanguageSupport:
             "Base",
             font_families=["Arial", "Times New Roman", "Helvetica"],
         ),
+        "zh": LanguageInfo(
+            "zh",
+            "Chinese",
+            ScriptType.SIMPLIFIED_CHINESE,
+            "Base",
+            font_families=["SimSun", "Noto Sans SC"],
+        ),
         # Indic Languages
         "hi": LanguageInfo(
             "hi",
@@ -151,13 +158,6 @@ class LanguageSupport:
             ScriptType.HANGUL,
             "Other",
             font_families=["Malgun Gothic", "Noto Sans KR"],
-        ),
-        "zh": LanguageInfo(
-            "zh",
-            "Chinese",
-            ScriptType.SIMPLIFIED_CHINESE,
-            "Other",
-            font_families=["SimSun", "Noto Sans SC"],
         ),
         "de": LanguageInfo(
             "de",

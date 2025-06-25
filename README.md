@@ -170,68 +170,87 @@ pip install -e .[llm]
 
 ## Quick Start
 
-### Basic Usage with LLM Integration
+### Minimal Workflow Usage
+
+Each workflow has a simple configuration class and returns HuggingFace dataset format:
 
 ```python
-from synthdoc import SynthDoc
-import os
+from synthdoc.models import RawDocumentGenerationConfig, AugmentationType
+from synthdoc.workflows import RawDocumentGenerator
 
-# Initialize SynthDoc with your preferred LLM
-synth = SynthDoc(
-    llm_model="gpt-3.5-turbo",  # or "claude-3-sonnet", "ollama/llama2", etc.
-    api_key=os.getenv("OPENAI_API_KEY")  # Set your API key
+# 1. Raw Document Generation
+config = RawDocumentGenerationConfig(
+    language="en",
+    num_pages=3,
+    augmentations=[AugmentationType.ROTATION, AugmentationType.NOISE]
 )
 
-# Generate raw documents using LLM
-documents = synth.generate_raw_docs(
-    language="en", 
-    num_pages=5, 
-    prompt="Generate technical documentation about machine learning"
-)
+generator = RawDocumentGenerator()
+result = generator.process(config)
 
-# Apply layout augmentation
-dataset = synth.augment_layout(
-    documents=documents,
-    fonts=["Arial", "Times New Roman"],
-    augmentations=["rotation", "scaling"]
-)
-
-# Generate VQA pairs using LLM
-vqa_dataset = synth.generate_vqa(
-    source_documents=documents,
-    question_types=["factual", "reasoning", "comparative"],
-    difficulty_levels=["easy", "medium", "hard"]
-)
+print(f"Generated {result.num_samples} samples")
+print(f"Dataset: {result.dataset}")  # HuggingFace format
 ```
 
-### Using Different LLM Providers
-
-SynthDoc uses [LiteLLM](https://github.com/BerriAI/litellm) for unified LLM access:
+### All Workflows
 
 ```python
-# OpenAI GPT models
-synth_openai = SynthDoc(llm_model="gpt-3.5-turbo", api_key=openai_key)
+from synthdoc.models import *
+from synthdoc.workflows import *
 
-# Anthropic Claude models  
-synth_claude = SynthDoc(llm_model="claude-3-sonnet-20240229", api_key=anthropic_key)
+# 1. Raw Document Generation
+raw_config = RawDocumentGenerationConfig(language="en", num_pages=2)
+raw_result = RawDocumentGenerator().process(raw_config)
 
-# Local Ollama models (no API key needed)
-synth_ollama = SynthDoc(llm_model="ollama/llama2")
+# 2. Layout Augmentation
+layout_config = LayoutAugmentationConfig(
+    documents=["doc1.pdf", "doc2.pdf"],
+    languages=["en"],
+    augmentations=[AugmentationType.SCALING]
+)
+layout_result = LayoutAugmenter().process(layout_config)
 
-# Azure OpenAI
-synth_azure = SynthDoc(llm_model="azure/gpt-35-turbo", api_key=azure_key)
+# 3. PDF Augmentation
+pdf_config = PDFAugmentationConfig(
+    pdf_files=["input.pdf"],
+    augmentations=[AugmentationType.BLUR]
+)
+pdf_result = PDFAugmenter().process(pdf_config)
+
+# 4. VQA Generation
+vqa_config = VQAGenerationConfig(
+    documents=["doc.pdf"],
+    num_questions_per_doc=5,
+    include_hard_negatives=True
+)
+vqa_result = VQAGenerator().process(vqa_config)
+
+# 5. Handwriting Generation
+handwriting_config = HandwritingGenerationConfig(
+    text_content="Sample text",
+    handwriting_style="cursive",
+    num_samples=10
+)
+handwriting_result = HandwritingGenerator().process(handwriting_config)
 ```
 
-### Fallback Mode (No LLM)
+All workflows return `WorkflowResult` with:
+- `dataset`: HuggingFace format dictionary
+- `metadata`: Additional information
+- `num_samples`: Number of generated samples
 
-SynthDoc works without LLM integration using sample content:
+### Available Augmentations
 
 ```python
-# Initialize without API key for basic functionality
-synth = SynthDoc()
+from synthdoc.models import AugmentationType
 
-# Still generates documents but with template content
-documents = synth.generate_raw_docs(language="en", num_pages=2)
+# Available augmentation types:
+AugmentationType.ROTATION
+AugmentationType.SCALING  
+AugmentationType.NOISE
+AugmentationType.BLUR
+AugmentationType.COLOR_SHIFT
+AugmentationType.CROPPING
 ```
 
 ## Contributing
