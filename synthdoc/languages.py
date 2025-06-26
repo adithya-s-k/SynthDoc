@@ -1,250 +1,95 @@
 """
-Language support configuration for SynthDoc.
-
-This module provides comprehensive language and script support for the library.
+Simple language support for SynthDoc using enum.
 """
 
-from dataclasses import dataclass
-from typing import Dict, List, Optional
 from enum import Enum
+from typing import Dict, List
 
 
-class ScriptType(Enum):
-    """Supported script types."""
-
-    LATIN = "Latin"
-    DEVANAGARI = "Devanagari"
-    KANNADA = "Kannada"
-    TAMIL = "Tamil"
-    TELUGU = "Telugu"
-    GURMUKHI = "Gurmukhi"
-    BENGALI = "Bengali"
-    ODIA = "Odia"
-    MALAYALAM = "Malayalam"
-    GUJARATI = "Gujarati"
-    KANJI_KANA = "Kanji/Kana"
-    HANGUL = "Hangul"
-    SIMPLIFIED_CHINESE = "Simplified"
-    CYRILLIC = "Cyrillic"
-    ARABIC = "Arabic"
-    THAI = "Thai"
-
-
-@dataclass
-class LanguageInfo:
-    """Language information structure."""
-
-    code: str
-    name: str
-    script: ScriptType
-    category: str
-    rtl: bool = False  # Right-to-left reading direction
-    font_families: List[str] = None
-
-    def __post_init__(self):
-        if self.font_families is None:
-            self.font_families = []
+class Language(Enum):
+    """Supported languages enum."""
+    EN = "en"  # English
+    HI = "hi"  # Hindi
+    SA = "sa"  # Sanskrit
+    BN = "bn"  # Bengali
+    GU = "gu"  # Gujarati
+    KN = "kn"  # Kannada
+    ML = "ml"  # Malayalam
+    MR = "mr"  # Marathi
+    OR = "or"  # Odia
+    PA = "pa"  # Punjabi
+    TA = "ta"  # Tamil
+    TE = "te"  # Telugu
+    ZH = "zh"  # Chinese
+    JA = "ja"  # Japanese
+    KO = "ko"  # Korean
+    DE = "de"  # German
+    FR = "fr"  # French
+    IT = "it"  # Italian
+    RU = "ru"  # Russian
+    AR = "ar"  # Arabic
+    ES = "es"  # Spanish
+    TH = "th"  # Thai
 
 
-class LanguageSupport:
-    """Central language support configuration."""
+# Font mapping for each language
+LANGUAGE_FONTS: Dict[str, List[str]] = {
+    "en": ["Arial", "Times New Roman", "Helvetica"],
+    "hi": ["Mangal", "Noto Sans Devanagari", "AnnapurnaSIL-Regular"],
+    "sa": ["Mangal", "Noto Sans Devanagari"],
+    "bn": ["Vrinda", "Noto Sans Bengali", "NotoSansBengali-Regular"],
+    "gu": ["Shruti", "Noto Sans Gujarati", "NotoSansGujarati-Regular"],
+    "kn": ["Tunga", "Noto Sans Kannada", "NotoSansKannada-Regular"],
+    "ml": ["Kartika", "Noto Sans Malayalam", "NotoSansMalayalam-Regular"],
+    "mr": ["Mangal", "Noto Sans Devanagari", "Mukta-Regular"],
+    "or": ["Kalinga", "Noto Sans Oriya", "NotoSansOriya-Regular"],
+    "pa": ["Raavi", "Noto Sans Gurmukhi"],
+    "ta": ["Latha", "Noto Sans Tamil"],
+    "te": ["Gautami", "Noto Sans Telugu", "NotoSansTelugu-Regular"],
+    "zh": ["SimSun", "Noto Sans SC"],
+    "ja": ["MS Gothic", "Noto Sans JP"],
+    "ko": ["Malgun Gothic", "Noto Sans KR"],
+    "de": ["Arial", "Times New Roman"],
+    "fr": ["Arial", "Times New Roman"],
+    "it": ["Arial", "Times New Roman"],
+    "ru": ["Times New Roman", "Arial Unicode MS"],
+    "ar": ["Traditional Arabic", "Noto Sans Arabic"],
+    "es": ["Arial", "Times New Roman"],
+    "th": ["Tahoma", "Noto Sans Thai"],
+}
 
-    # Comprehensive language mapping
-    LANGUAGES: Dict[str, LanguageInfo] = {
-        # Base Languages
-        "en": LanguageInfo(
-            "en",
-            "English",
-            ScriptType.LATIN,
-            "Base",
-            font_families=["Arial", "Times New Roman", "Helvetica"],
-        ),
-        "zh": LanguageInfo(
-            "zh",
-            "Chinese",
-            ScriptType.SIMPLIFIED_CHINESE,
-            "Base",
-            font_families=["SimSun", "Noto Sans SC"],
-        ),
-        # Indic Languages
-        "hi": LanguageInfo(
-            "hi",
-            "Hindi",
-            ScriptType.DEVANAGARI,
-            "Indic",
-            font_families=["Mangal", "Noto Sans Devanagari"],
-        ),
-        "kn": LanguageInfo(
-            "kn",
-            "Kannada",
-            ScriptType.KANNADA,
-            "Indic",
-            font_families=["Tunga", "Noto Sans Kannada"],
-        ),
-        "ta": LanguageInfo(
-            "ta",
-            "Tamil",
-            ScriptType.TAMIL,
-            "Indic",
-            font_families=["Latha", "Noto Sans Tamil"],
-        ),
-        "te": LanguageInfo(
-            "te",
-            "Telugu",
-            ScriptType.TELUGU,
-            "Indic",
-            font_families=["Gautami", "Noto Sans Telugu"],
-        ),
-        "mr": LanguageInfo(
-            "mr",
-            "Marathi",
-            ScriptType.DEVANAGARI,
-            "Indic",
-            font_families=["Mangal", "Noto Sans Devanagari"],
-        ),
-        "pa": LanguageInfo(
-            "pa",
-            "Punjabi",
-            ScriptType.GURMUKHI,
-            "Indic",
-            font_families=["Raavi", "Noto Sans Gurmukhi"],
-        ),
-        "bn": LanguageInfo(
-            "bn",
-            "Bengali",
-            ScriptType.BENGALI,
-            "Indic",
-            font_families=["Vrinda", "Noto Sans Bengali"],
-        ),
-        "or": LanguageInfo(
-            "or",
-            "Odia",
-            ScriptType.ODIA,
-            "Indic",
-            font_families=["Kalinga", "Noto Sans Oriya"],
-        ),
-        "ml": LanguageInfo(
-            "ml",
-            "Malayalam",
-            ScriptType.MALAYALAM,
-            "Indic",
-            font_families=["Kartika", "Noto Sans Malayalam"],
-        ),
-        "gu": LanguageInfo(
-            "gu",
-            "Gujarati",
-            ScriptType.GUJARATI,
-            "Indic",
-            font_families=["Shruti", "Noto Sans Gujarati"],
-        ),
-        "sa": LanguageInfo(
-            "sa",
-            "Sanskrit",
-            ScriptType.DEVANAGARI,
-            "Indic",
-            font_families=["Mangal", "Noto Sans Devanagari"],
-        ),
-        # Other Languages
-        "ja": LanguageInfo(
-            "ja",
-            "Japanese",
-            ScriptType.KANJI_KANA,
-            "Other",
-            font_families=["MS Gothic", "Noto Sans JP"],
-        ),
-        "ko": LanguageInfo(
-            "ko",
-            "Korean",
-            ScriptType.HANGUL,
-            "Other",
-            font_families=["Malgun Gothic", "Noto Sans KR"],
-        ),
-        "de": LanguageInfo(
-            "de",
-            "German",
-            ScriptType.LATIN,
-            "Other",
-            font_families=["Arial", "Times New Roman"],
-        ),
-        "fr": LanguageInfo(
-            "fr",
-            "French",
-            ScriptType.LATIN,
-            "Other",
-            font_families=["Arial", "Times New Roman"],
-        ),
-        "it": LanguageInfo(
-            "it",
-            "Italian",
-            ScriptType.LATIN,
-            "Other",
-            font_families=["Arial", "Times New Roman"],
-        ),
-        "ru": LanguageInfo(
-            "ru",
-            "Russian",
-            ScriptType.CYRILLIC,
-            "Other",
-            font_families=["Times New Roman", "Arial Unicode MS"],
-        ),
-        "ar": LanguageInfo(
-            "ar",
-            "Arabic",
-            ScriptType.ARABIC,
-            "Other",
-            rtl=True,
-            font_families=["Traditional Arabic", "Noto Sans Arabic"],
-        ),
-        "es": LanguageInfo(
-            "es",
-            "Spanish",
-            ScriptType.LATIN,
-            "Other",
-            font_families=["Arial", "Times New Roman"],
-        ),
-        "th": LanguageInfo(
-            "th",
-            "Thai",
-            ScriptType.THAI,
-            "Other",
-            font_families=["Tahoma", "Noto Sans Thai"],
-        ),
-    }
+# Language display names
+LANGUAGE_NAMES: Dict[str, str] = {
+    "en": "English",
+    "hi": "Hindi",
+    "sa": "Sanskrit", 
+    "bn": "Bengali",
+    "gu": "Gujarati",
+    "kn": "Kannada",
+    "ml": "Malayalam",
+    "mr": "Marathi",
+    "or": "Odia",
+    "pa": "Punjabi",
+    "ta": "Tamil",
+    "te": "Telugu",
+    "zh": "Chinese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "de": "German",
+    "fr": "French",
+    "it": "Italian",
+    "ru": "Russian",
+    "ar": "Arabic",
+    "es": "Spanish",
+    "th": "Thai",
+}
 
-    @classmethod
-    def get_language(cls, code: str) -> Optional[LanguageInfo]:
-        """Get language information by code."""
-        return cls.LANGUAGES.get(code)
 
-    @classmethod
-    def get_supported_languages(cls) -> List[str]:
-        """Get list of all supported language codes."""
-        return list(cls.LANGUAGES.keys())
+def get_language_fonts(language_code: str) -> List[str]:
+    """Get fonts for a language code."""
+    return LANGUAGE_FONTS.get(language_code, ["Arial"])
 
-    @classmethod
-    def get_languages_by_category(cls, category: str) -> Dict[str, LanguageInfo]:
-        """Get languages filtered by category."""
-        return {
-            code: lang
-            for code, lang in cls.LANGUAGES.items()
-            if lang.category == category
-        }
 
-    @classmethod
-    def get_languages_by_script(cls, script: ScriptType) -> Dict[str, LanguageInfo]:
-        """Get languages filtered by script type."""
-        return {
-            code: lang for code, lang in cls.LANGUAGES.items() if lang.script == script
-        }
-
-    @classmethod
-    def is_rtl_language(cls, code: str) -> bool:
-        """Check if language is right-to-left."""
-        lang = cls.get_language(code)
-        return lang.rtl if lang else False
-
-    @classmethod
-    def get_default_fonts(cls, code: str) -> List[str]:
-        """Get default fonts for a language."""
-        lang = cls.get_language(code)
-        return lang.font_families if lang else ["Arial"]
+def get_language_name(language_code: str) -> str:
+    """Get display name for a language code."""
+    return LANGUAGE_NAMES.get(language_code, "Unknown")

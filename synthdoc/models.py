@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Union, Dict, Any
 from enum import Enum
 from pathlib import Path
+from .languages import Language
 
 
 class AugmentationType(Enum):
@@ -13,6 +14,13 @@ class AugmentationType(Enum):
     CROPPING = "cropping"
 
 
+class LayoutType(Enum):
+    SINGLE_COLUMN = "SINGLE_COLUMN"
+    TWO_COLUMN = "TWO_COLUMN"
+    THREE_COLUMN = "THREE_COLUMN"
+    NEWSLETTER = "NEWSLETTER"
+
+
 class OutputFormat(Enum):
     HUGGINGFACE = "huggingface"
 
@@ -21,12 +29,24 @@ class OutputFormat(Enum):
 class RawDocumentGenerationConfig(BaseModel):
     """Configuration for generating synthetic documents from scratch using LLMs."""
 
-    language: str = Field(
-        default="en", description="Target language for content generation"
+    language: Language = Field(
+        default=Language.EN, description="Target language for content generation"
     )
     num_pages: int = Field(default=1, ge=1, description="Number of pages to generate")
     prompt: Optional[str] = Field(
         default=None, description="Custom prompt for content generation"
+    )
+    layout_type: LayoutType = Field(
+        default=LayoutType.SINGLE_COLUMN, description="Document layout type"
+    )
+    include_graphs: bool = Field(
+        default=False, description="Include graphs in generated documents"
+    )
+    include_tables: bool = Field(
+        default=False, description="Include tables in generated documents"
+    )
+    include_ai_images: bool = Field(
+        default=False, description="Include AI-generated images"
     )
     augmentations: Optional[List[AugmentationType]] = Field(
         default=None, description="List of augmentations to apply"
@@ -34,6 +54,8 @@ class RawDocumentGenerationConfig(BaseModel):
     output_format: OutputFormat = Field(
         default=OutputFormat.HUGGINGFACE, description="Output format"
     )
+    
+
 
 
 # Layout Augmentation Workflow
@@ -43,8 +65,8 @@ class LayoutAugmentationConfig(BaseModel):
     documents: List[Union[str, Path]] = Field(
         description="List of PDF files or images to process"
     )
-    languages: List[str] = Field(
-        default=["en"], description="Target languages for text content"
+    languages: List[Language] = Field(
+        default=[Language.EN], description="Target languages for text content"
     )
     fonts: Optional[List[str]] = Field(
         default=None, description="Font families to apply"
@@ -109,7 +131,7 @@ class HandwritingGenerationConfig(BaseModel):
     handwriting_style: str = Field(
         default="default", description="Handwriting style to use"
     )
-    language: str = Field(default="en", description="Language for handwriting")
+    language: Language = Field(default=Language.EN, description="Language for handwriting")
     num_samples: int = Field(
         default=1, ge=1, description="Number of handwriting samples to generate"
     )
@@ -124,8 +146,10 @@ class HandwritingGenerationConfig(BaseModel):
 # Base Workflow Result
 class WorkflowResult(BaseModel):
     """Standard result format for all workflows."""
+    
+    model_config = {"arbitrary_types_allowed": True}
 
-    dataset: Dict[str, Any] = Field(description="HuggingFace dataset format")
+    dataset: Any = Field(description="HuggingFace dataset or dict")
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata"
     )
