@@ -9,6 +9,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+import litellm
 
 
 def setup_logging(level: str = "INFO") -> logging.Logger:
@@ -187,3 +188,55 @@ def merge_configs(
             merged[key] = value
 
     return merged
+
+
+class CostTracker:
+    def __init__(self):
+        self.total_cost = 0.0
+        self.api_calls_count = 0
+        self.token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    
+    def get_dynamic_pricing(self, model: str) -> Dict[str, float]:
+        """Get dynamic pricing from LiteLLM."""
+        try:
+            # LiteLLM has built-in pricing
+            return litellm.get_model_cost_map(model)
+        except:
+            # Fallback to known pricing
+            fallback_pricing = {
+                "groq/llama3-8b-8192": {"input": 0.00005, "output": 0.00008},
+                "groq/llama3-70b-8192": {"input": 0.00059, "output": 0.00079},
+                "groq/mixtral-8x7b-32768": {"input": 0.00024, "output": 0.00024}
+            }
+            return fallback_pricing.get(model, {"input": 0.0, "output": 0.0})
+    
+    def track_usage(self, response, model: str = "groq/llama3-8b-8192") -> float:
+        """Track API usage and costs."""
+        self.api_calls_count += 1
+        if hasattr(response, 'usage') and response.usage:
+            prompt_tokens = response.usage.prompt_tokens
+            completion_tokens = response.usage.completion_tokens
+            
+            self.token_usage["prompt_tokens"] += prompt_tokens
+            self.token_usage["completion_tokens"] += completion_tokens
+            self.token_usage["total_tokens"] += prompt_tokens + completion_tokens
+            
+            # Use dynamic pricing
+            pricing = self.get_dynamic_pricing(model)
+            input_cost = (prompt_tokens / 1000) * pricing.get("input", 0)
+            output_cost = (completion_tokens / 1000) * pricing.get("output", 0)
+            cost = input_cost + output_cost
+            
+            self.total_cost += cost
+            return cost
+        return 0.0
+    
+     
+    def get_summary(self) -> Dict[str, Any]:
+        """Get cost tracking summary."""
+        return {
+            "total_cost": self.total_cost,
+            "api_calls": self.api_calls_count,
+            "tokens_used": self.token_usage['total_tokens'],
+            "token_breakdown": self.token_usage
+        }
