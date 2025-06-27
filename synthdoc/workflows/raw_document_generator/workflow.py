@@ -98,7 +98,8 @@ class RawDocumentGenerator(BaseWorkflow):
         except:
             enhanced_topic = f"{config.prompt or 'document'} - Comprehensive analysis with technical depth and examples"
         
-        language_name = get_language_name(config.language)
+        language_code = config.language.value if isinstance(config.language, Language) else config.language
+        language_name = get_language_name(language_code)
         base_prompt = self.base_prompt.format(language=language_name)
         
         words_per_page = 1000
@@ -110,7 +111,7 @@ class RawDocumentGenerator(BaseWorkflow):
         Include multiple detailed sections, each with 4-5 paragraphs minimum.
         """
         
-        system_msg = f"You are an expert writer creating high-quality documents in {language_name}. Please make sure you only write in {language_name}, no other language apart from that."
+        system_msg = f"You are an expert writer creating high-quality documents in {language_name}. IMPORTANT: Write ONLY in {language_name}. Do not use any other language. All content must be in {language_name} language."
         
         #liteLLM handles retries
         response = litellm.completion(

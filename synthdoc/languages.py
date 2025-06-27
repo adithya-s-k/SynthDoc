@@ -4,7 +4,8 @@ Simple language support for SynthDoc using enum.
 
 from enum import Enum
 from typing import Dict, List
-
+import os
+from PIL import ImageFont
 
 class Language(Enum):
     """Supported languages enum."""
@@ -93,3 +94,56 @@ def get_language_fonts(language_code: str) -> List[str]:
 def get_language_name(language_code: str) -> str:
     """Get display name for a language code."""
     return LANGUAGE_NAMES.get(language_code, "Unknown")
+
+# Helper function to load language-appropriate fonts
+def load_language_font(language_code: str, size: int = 12):
+    """Load appropriate font for the given language."""
+    try:
+        # Get the fonts directory path
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        fonts_base_dir = os.path.join(os.path.dirname(os.path.dirname(current_dir)), 'fonts')
+        
+        # Language-specific font mapping to local files
+        language_font_files = {
+            'hi': ['NotoSansDevanagari-Regular.ttf', 'AnnapurnaSIL-Regular.ttf', 'Kalam-Regular.ttf'],
+            'sa': ['NotoSansDevanagari-Regular.ttf', 'AnnapurnaSIL-Regular.ttf'],
+            'mr': ['NotoSansDevanagari-Regular.ttf'],
+            'bn': ['NotoSansBengali-Regular.ttf', 'NotoSerifBengali-Regular.ttf'],
+            'gu': ['NotoSansGujarati-Regular.ttf', 'NotoSerifGujarati-Regular.ttf'],
+            'kn': ['NotoSansKannada-Regular.ttf', 'NotoSerifKannada-Regular.ttf'],
+            'ml': ['NotoSansMalayalam-Regular.ttf', 'NotoSerifMalayalam-Regular.ttf'],
+            'or': ['NotoSansOriya-Regular.ttf'],
+            'pa': ['NotoSansGurmukhi-Regular.ttf'],
+            'ta': ['NotoSansTamil-Regular.ttf'],
+            'te': ['NotoSansTelugu-Regular.ttf']
+        }
+        
+        # Try local font files first
+        if language_code in language_font_files:
+            lang_dir = os.path.join(fonts_base_dir, language_code)
+            if os.path.exists(lang_dir):
+                for font_file in language_font_files[language_code]:
+                    font_path = os.path.join(lang_dir, font_file)
+                    if os.path.exists(font_path):
+                        try:
+                            return ImageFont.truetype(font_path, size)
+                        except:
+                            continue
+        
+        # Fallback to system fonts
+        fallback_fonts = ["arial.ttf", "Arial", "DejaVu Sans"]
+        for font_name in fallback_fonts:
+            try:
+                return ImageFont.truetype(font_name, size)
+            except:
+                continue
+        
+        # Final fallback
+        return ImageFont.load_default()
+        
+    except Exception as e:
+        print(f"⚠️ Font loading error for {language_code}: {e}")
+        try:
+            return ImageFont.load_default()
+        except:
+            return None
