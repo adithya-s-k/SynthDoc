@@ -1,0 +1,26 @@
+{
+  "workflow_type": "raw_document_generation",
+  "total_cost": 0.022278,
+  "api_calls": 2,
+  "token_usage": {
+    "prompt_tokens": 683,
+    "completion_tokens": 2057,
+    "total_tokens": 2740
+  },
+  "tokens_used": 2740,
+  "average_cost_per_call": 0.011139,
+  "num_samples": 2,
+  "config": {
+    "language": "es",
+    "num_pages": 2,
+    "prompt": "Genera un informe técnico sobre inteligencia artificial y su aplicación en la medicina moderna",
+    "include_graphs": false,
+    "include_tables": false,
+    "include_ai_images": false,
+    "output_format": "huggingface"
+  },
+  "generated_files": [
+    "document_es_41654.pdf_page_1.png",
+    "document_es_41654.pdf_page_2.png"
+  ]
+}

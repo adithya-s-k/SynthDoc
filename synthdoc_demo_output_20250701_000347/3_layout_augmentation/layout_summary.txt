@@ -1,0 +1,4 @@
+Layout Augmentation Results
+Generated: 2025-07-01 00:04:10.520052
+Input documents: 2
+Languages: ['en', 'es']

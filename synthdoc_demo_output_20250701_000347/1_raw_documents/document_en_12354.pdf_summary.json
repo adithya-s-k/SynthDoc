@@ -1,0 +1,25 @@
+{
+  "workflow_type": "raw_document_generation",
+  "total_cost": 0.01032,
+  "api_calls": 4,
+  "token_usage": {
+    "prompt_tokens": 1250,
+    "completion_tokens": 4535,
+    "total_tokens": 5785
+  },
+  "tokens_used": 5785,
+  "average_cost_per_call": 0.00258,
+  "num_samples": 1,
+  "config": {
+    "language": "en",
+    "num_pages": 1,
+    "prompt": "Create a business analysis document discussing market trends in artificial intelligence and machine learning",
+    "include_graphs": false,
+    "include_tables": true,
+    "include_ai_images": false,
+    "output_format": "huggingface"
+  },
+  "generated_files": [
+    "document_en_12354.pdf_page_1.png"
+  ]
+}

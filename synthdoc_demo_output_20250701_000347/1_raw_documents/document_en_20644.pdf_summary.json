@@ -1,0 +1,26 @@
+{
+  "workflow_type": "raw_document_generation",
+  "total_cost": 0.00535,
+  "api_calls": 2,
+  "token_usage": {
+    "prompt_tokens": 638,
+    "completion_tokens": 2356,
+    "total_tokens": 2994
+  },
+  "tokens_used": 2994,
+  "average_cost_per_call": 0.002675,
+  "num_samples": 2,
+  "config": {
+    "language": "en",
+    "num_pages": 2,
+    "prompt": "Generate a comprehensive technical report about renewable energy technologies, including solar, wind, and hydroelectric power systems",
+    "include_graphs": true,
+    "include_tables": true,
+    "include_ai_images": false,
+    "output_format": "huggingface"
+  },
+  "generated_files": [
+    "document_en_20644.pdf_page_1.png",
+    "document_en_20644.pdf_page_2.png"
+  ]
+}

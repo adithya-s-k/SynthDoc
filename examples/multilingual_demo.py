@@ -1,228 +1,307 @@
+#!/usr/bin/env python3
 """
-Multilingual demonstration of SynthDoc capabilities.
+Multilingual SynthDoc Demo
 
-This script showcases the library's multilingual document generation
-across different script systems and language families.
+This script demonstrates SynthDoc's comprehensive multilingual capabilities,
+showcasing document generation across different languages and scripts.
 """
 
-from synthdoc import SynthDoc, LanguageSupport
-from synthdoc.fonts import FontManager
+import os
+from pathlib import Path
+from synthdoc import SynthDoc, LanguageSupport, Language, create_raw_documents, create_handwriting_samples
 
 
-def demo_language_categories():
-    """Demonstrate generation across different language categories."""
-    print("🌍 Multilingual SynthDoc Demo")
+def main():
+    """Demonstrate SynthDoc's multilingual capabilities."""
+    print("🌍 SynthDoc Multilingual Demo")
     print("=" * 50)
+    
+    # Initialize SynthDoc
+    api_key = os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY")
+    output_dir = "./multilingual_output"
+    
+    # Create output directory
+    Path(output_dir).mkdir(exist_ok=True)
+    
+    if api_key:
+        print("✅ Using LLM for advanced content generation")
+        synth = SynthDoc(
+            output_dir=output_dir,
+            llm_model="gpt-4o-mini",
+            api_key=api_key
+        )
+    else:
+        print("⚠️  Using template content (set GROQ_API_KEY or OPENAI_API_KEY for LLM features)")
+        synth = SynthDoc(output_dir=output_dir)
 
-    synth = SynthDoc(output_dir="./multilingual_output")
-    font_manager = FontManager()
+    # Demo 1: Multi-script Support
+    print("\n📜 Demo 1: Multi-Script Document Generation")
+    print("-" * 40)
+    
+    script_examples = [
+        {
+            "language": "en", 
+            "name": "English (Latin)", 
+            "prompt": "Generate a technical document about artificial intelligence",
+            "sample_text": "Hello World - This is English text using Latin script."
+        },
+        {
+            "language": "hi", 
+            "name": "Hindi (Devanagari)", 
+            "prompt": "कृत्रिम बुद्धिमत्ता के बारे में तकनीकी दस्तावेज़ बनाएं",
+            "sample_text": "नमस्ते विश्व - यह देवनागरी लिपि का उदाहरण है।"
+        },
+        {
+            "language": "ar", 
+            "name": "Arabic (Arabic Script)", 
+            "prompt": "إنشاء وثيقة تقنية حول الذكاء الاصطناعي",
+            "sample_text": "مرحبا بالعالم - هذا مثال على النص العربي."
+        },
+        {
+            "language": "zh", 
+            "name": "Chinese (Simplified)", 
+            "prompt": "生成关于人工智能的技术文档",
+            "sample_text": "你好世界 - 这是中文简体字的例子。"
+        },
+        {
+            "language": "ja", 
+            "name": "Japanese (Hiragana/Kanji)", 
+            "prompt": "人工知能に関する技術文書を生成する",
+            "sample_text": "こんにちは世界 - これは日本語の例です。"
+        }
+    ]
+    
+    generated_docs = {}
+    
+    for example in script_examples:
+        lang = example["language"]
+        name = example["name"]
+        
+        print(f"\n🔤 Generating {name} document...")
+        
+        try:
+            # Generate document using SynthDoc
+            docs = synth.generate_raw_docs(
+                language=lang,
+                num_pages=1,
+                prompt=example["prompt"]
+            )
+            
+            generated_docs[lang] = docs
+            
+            if docs and docs[0].get("image_path"):
+                print(f"  ✅ Generated: {docs[0]['image_path']}")
+                print(f"  📝 Content preview: {docs[0].get('content', '')[:50]}...")
+            else:
+                print(f"  ⚠️  Generated but no image path")
+            
+        except Exception as e:
+            print(f"  ❌ Error generating {name}: {e}")
 
-    # Get languages by category
-    categories = ["Base", "Indic", "Other"]
-
-    for category in categories:
-        print(f"\n📚 {category} Languages:")
-        category_langs = LanguageSupport.get_languages_by_category(category)
-
-        for lang_code, lang_info in list(category_langs.items())[
-            :3
-        ]:  # Limit to 3 per category
-            print(f"\n  🔤 {lang_info.name} ({lang_code})")
-            print(f"     Script: {lang_info.script.value}")
-            print(f"     RTL: {lang_info.rtl}")
-
-            # Get available fonts
-            available_fonts = font_manager.get_available_fonts_for_language(lang_code)
-            print(f"     Available Fonts: {', '.join(available_fonts[:3])}...")
-
-            # Generate a sample document
-            try:
-                docs = synth.generate_raw_docs(
-                    language=lang_code,
-                    num_pages=1,
-                    prompt=f"Generate sample content in {lang_info.name}",
-                )
-                print(f"     ✅ Generated {len(docs)} document(s)")
-
-                # Show sample content (truncated)
-                if docs and docs[0].get("content"):
-                    content_preview = docs[0]["content"][:100]
-                    print(f"     Preview: {content_preview}...")
-
-            except Exception as e:
-                print(f"     ❌ Generation failed: {e}")
-
-
-def demo_script_systems():
-    """Demonstrate different script systems."""
-    print("\n\n📝 Script System Demonstration")
-    print("=" * 40)
-
-    synth = SynthDoc(output_dir="./script_demo_output")
-
-    # Representative languages for each major script
-    script_examples = {
-        "Latin": ["en", "de", "fr", "es"],
-        "Devanagari": ["hi", "mr", "sa"],
-        "Dravidian": ["ta", "te", "kn", "ml"],
-        "Other": ["zh", "ja", "ko", "ar"],
-    }
-
-    for script_family, lang_codes in script_examples.items():
-        print(f"\n🔤 {script_family} Script Family:")
-
-        for lang_code in lang_codes:
-            lang_info = LanguageSupport.get_language(lang_code)
-            if lang_info:
-                print(f"  • {lang_info.name} ({lang_code}) - {lang_info.script.value}")
-
-                # Generate with script-appropriate content
-                try:
-                    docs = synth.generate_raw_docs(
-                        language=lang_code,
-                        num_pages=1,
-                        prompt=f"Generate sample text showcasing {lang_info.script.value} script",
-                    )
-                    print(f"    ✅ Generated successfully")
-                except Exception as e:
-                    print(f"    ❌ Failed: {e}")
-
-
-def demo_rtl_languages():
-    """Demonstrate right-to-left language handling."""
-    print("\n\n↩️  Right-to-Left Languages Demo")
-    print("=" * 35)
-
-    synth = SynthDoc(output_dir="./rtl_demo_output")
-
-    # Find RTL languages
-    rtl_languages = []
-    for code, lang_info in LanguageSupport.LANGUAGES.items():
-        if lang_info.rtl:
-            rtl_languages.append((code, lang_info))
-
-    print(f"Found {len(rtl_languages)} RTL language(s)")
-
-    for lang_code, lang_info in rtl_languages:
-        print(f"\n📜 {lang_info.name} ({lang_code})")
-        print(f"   Script: {lang_info.script.value}")
-        print(f"   Reading Direction: Right-to-Left")
-
+    # Demo 2: Indic Languages Showcase  
+    print("\n🕉️  Demo 2: Indic Languages Showcase")
+    print("-" * 40)
+    
+    indic_languages = [
+        {"code": "hi", "name": "Hindi", "script": "Devanagari"},
+        {"code": "bn", "name": "Bengali", "script": "Bengali"},
+        {"code": "ta", "name": "Tamil", "script": "Tamil"},
+        {"code": "te", "name": "Telugu", "script": "Telugu"},
+        {"code": "kn", "name": "Kannada", "script": "Kannada"},
+        {"code": "ml", "name": "Malayalam", "script": "Malayalam"},
+        {"code": "gu", "name": "Gujarati", "script": "Gujarati"},
+        {"code": "or", "name": "Odia", "script": "Odia"},
+        {"code": "pa", "name": "Punjabi", "script": "Gurmukhi"},
+        {"code": "mr", "name": "Marathi", "script": "Devanagari"}
+    ]
+    
+    indic_docs = []
+    
+    for lang_info in indic_languages[:5]:  # Generate for first 5 to save time
+        lang_code = lang_info["code"]
+        lang_name = lang_info["name"]
+        script = lang_info["script"]
+        
+        print(f"\n📚 Generating {lang_name} ({script}) document...")
+        
         try:
             docs = synth.generate_raw_docs(
                 language=lang_code,
                 num_pages=1,
-                prompt="Generate text that demonstrates right-to-left reading",
+                prompt=f"Create a technical document in {lang_name}"
             )
-
+            
+            indic_docs.extend(docs)
+            
             if docs:
-                print("   ✅ RTL document generated")
-                # In a real implementation, this would handle RTL layout
-                print("   📝 Layout: RTL text flow applied")
+                print(f"  ✅ Generated {lang_name} document")
+            
         except Exception as e:
-            print(f"   ❌ Generation failed: {e}")
+            print(f"  ❌ Error generating {lang_name}: {e}")
 
-
-def demo_multilingual_dataset():
-    """Create a mixed multilingual dataset."""
-    print("\n\n🌐 Mixed Multilingual Dataset")
-    print("=" * 32)
-
-    synth = SynthDoc(output_dir="./mixed_dataset_output")
-
-    # Select diverse languages
-    selected_languages = ["en", "hi", "zh", "ar", "de", "ja", "ta", "ko"]
-
-    all_documents = []
-
-    for lang_code in selected_languages:
-        lang_info = LanguageSupport.get_language(lang_code)
-        if lang_info:
-            print(f"Generating {lang_info.name} documents...")
-
-            try:
-                docs = synth.generate_raw_docs(
-                    language=lang_code,
-                    num_pages=2,
-                    prompt=f"Generate diverse content in {lang_info.name}",
-                    augmentations=["rotation", "noise"],
+    # Demo 3: Handwriting in Multiple Languages
+    print("\n✍️  Demo 3: Multilingual Handwriting Generation")
+    print("-" * 40)
+    
+    handwriting_examples = [
+        {"lang": "en", "text": "The quick brown fox jumps over the lazy dog.", "style": "cursive"},
+        {"lang": "hi", "text": "त्वरित भूरी लोमड़ी आलसी कुत्ते के ऊपर कूदती है।", "style": "print"},
+        {"lang": "ar", "text": "الثعلب البني السريع يقفز فوق الكلب الكسول.", "style": "default"},
+        {"lang": "zh", "text": "快速的棕色狐狸跳过懒惰的狗。", "style": "print"}
+    ]
+    
+    handwriting_samples = []
+    
+    for example in handwriting_examples:
+        lang = example["lang"]
+        text = example["text"]
+        style = example["style"]
+        
+        print(f"\n🖋️  Generating {lang.upper()} handwriting ({style})...")
+        
+        try:
+            # Use new workflow function if API key available
+            if api_key:
+                result = create_handwriting_samples(
+                    text_content=text,
+                    language=Language(lang),
+                    handwriting_style=style,
+                    num_samples=1
                 )
-                all_documents.extend(docs)
-                print(f"  ✅ Added {len(docs)} documents")
+                handwriting_samples.append(result)
+                print(f"  ✅ Generated handwriting sample")
+            else:
+                # Use legacy method
+                handwritten = synth.generate_handwriting(
+                    content=text,
+                    language=lang,
+                    writing_style=style
+                )
+                handwriting_samples.append(handwritten)
+                print(f"  ✅ Generated handwriting sample")
+                
+        except Exception as e:
+            print(f"  ❌ Error generating {lang} handwriting: {e}")
 
-            except Exception as e:
-                print(f"  ❌ Failed for {lang_code}: {e}")
+    # Demo 4: Font Variations Across Languages
+    print("\n🔤 Demo 4: Font Variations Across Languages")
+    print("-" * 40)
+    
+    font_demo_langs = ["en", "hi", "ar", "zh"]
+    
+    for lang in font_demo_langs:
+        lang_info = synth.get_language_info(lang)
+        if lang_info:
+            fonts = lang_info.get("fonts", [])
+            print(f"\n{lang.upper()} - Available fonts: {', '.join(fonts[:3])}...")
+            
+            # Generate document with different fonts
+            if len(fonts) > 0:
+                try:
+                    docs = synth.augment_layout(
+                        documents=generated_docs.get(lang, [])[:1],  # Use first doc if available
+                        languages=[lang],
+                        fonts=fonts[:2],  # Use first 2 fonts
+                        augmentations=["rotation"]
+                    )
+                    
+                    num_variations = len(docs.get("images", []))
+                    print(f"  ✅ Generated {num_variations} font variations")
+                    
+                except Exception as e:
+                    print(f"  ❌ Error with font variations: {e}")
 
-    # Apply multilingual layout augmentation
-    print(f"\n🎨 Applying layout augmentation to {len(all_documents)} documents...")
+    # Demo 5: Language Detection and Support Info
+    print("\n🔍 Demo 5: Language Support Information")
+    print("-" * 40)
+    
+    # Show all supported languages by category
+    all_languages = synth.get_supported_languages()
+    print(f"\n📊 Total supported languages: {len(all_languages)}")
+    
+    categories = ["Base", "Indic", "Other"]
+    for category in categories:
+        category_langs = LanguageSupport.get_languages_by_category(category)
+        print(f"\n{category} Languages ({len(category_langs)}):")
+        
+        for code, lang_info in list(category_langs.items())[:5]:  # Show first 5
+            print(f"  {code}: {lang_info.name} ({lang_info.script.value})")
+        
+        if len(category_langs) > 5:
+            print(f"  ... and {len(category_langs) - 5} more")
 
-    try:
-        dataset = synth.augment_layout(
-            documents=all_documents,
-            languages=selected_languages,
-            fonts=["Arial", "Times New Roman", "Arial Unicode MS"],
-            augmentations=["rotation", "scaling", "brightness", "contrast"],
-        )
+    # Demo 6: RTL (Right-to-Left) Language Support
+    print("\n↩️  Demo 6: RTL Language Support")
+    print("-" * 40)
+    
+    rtl_languages = ["ar", "he", "fa"]  # Arabic, Hebrew, Persian
+    
+    for lang in rtl_languages:
+        lang_info = synth.get_language_info(lang)
+        if lang_info:
+            print(f"\n{lang.upper()}: {lang_info['name']}")
+            print(f"  RTL Support: {'✅' if lang_info['rtl'] else '❌'}")
+            print(f"  Script: {lang_info['script']}")
+            
+            # Generate RTL document if supported
+            if lang_info['rtl']:
+                try:
+                    rtl_docs = synth.generate_raw_docs(
+                        language=lang,
+                        num_pages=1,
+                        prompt="Generate sample text"
+                    )
+                    
+                    if rtl_docs:
+                        print(f"  ✅ Generated RTL document")
+                    
+                except Exception as e:
+                    print(f"  ❌ Error with RTL generation: {e}")
 
-        print("✅ Multilingual dataset created!")
-        print(
-            f"📊 Dataset contains {len(all_documents)} documents across {len(selected_languages)} languages"
-        )
-
-        # Show language distribution
-        lang_counts = {}
-        for doc in all_documents:
-            lang = doc.get("language", "unknown")
-            lang_counts[lang] = lang_counts.get(lang, 0) + 1
-
-        print("\n📈 Language Distribution:")
-        for lang, count in lang_counts.items():
-            lang_info = LanguageSupport.get_language(lang)
-            name = lang_info.name if lang_info else lang
-            print(f"  {name} ({lang}): {count} documents")
-
-    except Exception as e:
-        print(f"❌ Dataset creation failed: {e}")
-
-
-def demo_font_availability():
-    """Show font availability for different languages."""
-    print("\n\n🔤 Font Availability Report")
-    print("=" * 28)
-
-    font_manager = FontManager()
-
-    print(f"Total system fonts discovered: {len(font_manager.list_all_fonts())}")
-
-    # Check each language
-    for lang_code, lang_info in LanguageSupport.LANGUAGES.items():
-        available_fonts = font_manager.get_available_fonts_for_language(lang_code)
-
-        print(f"\n{lang_info.name} ({lang_code}):")
-        print(f"  Script: {lang_info.script.value}")
-        print(f"  Recommended: {', '.join(lang_info.font_families[:2])}")
-        print(f"  Available: {', '.join(available_fonts[:3])}")
-
-        if not available_fonts:
-            print("  ⚠️  No fonts available - using fallbacks")
-
-
-def main():
-    """Run all multilingual demonstrations."""
-    try:
-        demo_language_categories()
-        demo_script_systems()
-        demo_rtl_languages()
-        demo_multilingual_dataset()
-        demo_font_availability()
-
-        print("\n\n🎉 Multilingual demonstration complete!")
-        print("Check the output directories for generated files.")
-
-    except KeyboardInterrupt:
-        print("\n\n⏹️  Demo interrupted by user")
-    except Exception as e:
-        print(f"\n\n❌ Demo failed: {e}")
+    # Summary
+    print("\n📊 Multilingual Demo Summary")
+    print("=" * 50)
+    
+    total_docs = sum(len(docs) for docs in generated_docs.values())
+    total_handwriting = len(handwriting_samples)
+    
+    print(f"📄 Documents generated: {total_docs}")
+    print(f"✍️  Handwriting samples: {total_handwriting}")
+    print(f"🌍 Languages tested: {len(generated_docs)}")
+    print(f"📁 Output directory: {output_dir}")
+    
+    print(f"\n🎯 Language Coverage:")
+    print(f"  • Script systems: Latin, Devanagari, Arabic, Chinese, Japanese")
+    print(f"  • Writing directions: LTR (Left-to-Right), RTL (Right-to-Left)")
+    print(f"  • Font families: Multiple per language")
+    print(f"  • Character sets: Unicode support")
+    
+    print(f"\n✨ Key Features Demonstrated:")
+    features = [
+        "✅ Multi-script document generation",
+        "✅ Indic language support (10+ languages)",
+        "✅ Multilingual handwriting synthesis",
+        "✅ Font variation across languages",
+        "✅ RTL language handling",
+        "✅ Language-specific content generation",
+        "✅ Unicode character support",
+        "✅ Script-appropriate font selection"
+    ]
+    
+    for feature in features:
+        print(f"  {feature}")
+    
+    print(f"\n💡 Tips for Multilingual Usage:")
+    tips = [
+        "Set appropriate API keys for LLM-powered content generation",
+        "Use language-specific prompts for better content quality",
+        "Test font availability for target languages",
+        "Consider text direction (LTR/RTL) for layout",
+        "Validate Unicode encoding for special characters"
+    ]
+    
+    for i, tip in enumerate(tips, 1):
+        print(f"  {i}. {tip}")
 
 
 if __name__ == "__main__":

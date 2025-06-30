@@ -1,0 +1,76 @@
+{
+  "timestamp": "20250701_022234",
+  "languages_tested": [
+    "en",
+    "es",
+    "zh",
+    "hi",
+    "ar",
+    "fr"
+  ],
+  "workflows_completed": [
+    "raw_documents",
+    "handwriting",
+    "layout_augmentation",
+    "vqa"
+  ],
+  "total_samples_generated": 66,
+  "datasets_created": [
+    {
+      "name": "raw_documents",
+      "samples": 6,
+      "features": [
+        "imagewidth",
+        "pdf_name",
+        "page_number",
+        "markdown",
+        "html",
+        "layout",
+        "lines",
+        "images",
+        "equations",
+        "tables",
+        "page_size",
+        "content_list",
+        "base_layout_detection",
+        "pdf_info",
+        "system_prompt",
+        "response",
+        "image_path"
+      ],
+      "local_path": "multilingual_demo_20250701_022234/hf_datasets/raw_documents"
+    },
+    {
+      "name": "handwriting",
+      "samples": 54,
+      "features": [
+        "id",
+        "image_path",
+        "text_content",
+        "handwriting_style",
+        "language",
+        "augmentations",
+        "image_width",
+        "image_height",
+        "metadata"
+      ],
+      "local_path": "multilingual_demo_20250701_022234/hf_datasets/handwriting"
+    },
+    {
+      "name": "vqa",
+      "samples": 6,
+      "features": [
+        "id",
+        "document_path",
+        "question",
+        "answer",
+        "hard_negatives",
+        "question_type",
+        "difficulty",
+        "similarity_scores"
+      ],
+      "local_path": "multilingual_demo_20250701_022234/hf_datasets/vqa"
+    }
+  ],
+  "hf_uploads": []
+}

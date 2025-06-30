@@ -1,0 +1,69 @@
+{
+  "citation": "",
+  "description": "",
+  "features": {
+    "id": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "image_path": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "text_content": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "handwriting_style": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "language": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "augmentations": {
+      "feature": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "_type": "Sequence"
+    },
+    "image_width": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "image_height": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "metadata": {
+      "font_variation": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "line_spacing": {
+        "dtype": "int64",
+        "_type": "Value"
+      },
+      "margin_left": {
+        "dtype": "int64",
+        "_type": "Value"
+      },
+      "paper_type": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "pen_color": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "writing_style": {
+        "dtype": "string",
+        "_type": "Value"
+      }
+    }
+  },
+  "homepage": "",
+  "license": ""
+}

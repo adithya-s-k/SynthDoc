@@ -5,8 +5,37 @@ This module provides comprehensive language and script support for the library.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from enum import Enum
+from PIL import ImageFont
+import os
+
+
+class Language(Enum):
+    """Supported languages enum for easy access."""
+    
+    EN = "en"
+    HI = "hi"
+    KN = "kn"
+    TA = "ta"
+    TE = "te"
+    MR = "mr"
+    PA = "pa"
+    BN = "bn"
+    OR = "or"
+    ML = "ml"
+    GU = "gu"
+    SA = "sa"
+    JA = "ja"
+    KO = "ko"
+    ZH = "zh"
+    DE = "de"
+    FR = "fr"
+    IT = "it"
+    RU = "ru"
+    AR = "ar"
+    ES = "es"
+    TH = "th"
 
 
 class ScriptType(Enum):
@@ -248,3 +277,41 @@ class LanguageSupport:
         """Get default fonts for a language."""
         lang = cls.get_language(code)
         return lang.font_families if lang else ["Arial"]
+
+
+# Utility functions for backward compatibility
+def load_language_font(language_code: str, size: int = 12, style: str = "regular"):
+    """Load appropriate font for a language."""
+    try:
+        lang_support = LanguageSupport()
+        fonts = lang_support.get_default_fonts(language_code)
+        
+        # Try to load the first available font
+        for font_name in fonts:
+            try:
+                return ImageFont.truetype(font_name, size)
+            except (OSError, IOError):
+                continue
+        
+        # Fallback to default font
+        return ImageFont.load_default()
+        
+    except Exception:
+        return ImageFont.load_default()
+
+
+def get_language_name(language_code: Union[str, Language]) -> str:
+    """Get language name from code."""
+    # Handle Language enum
+    if isinstance(language_code, Language):
+        language_code = language_code.value
+    
+    lang_support = LanguageSupport()
+    lang = lang_support.get_language(language_code)
+    return lang.name if lang else "English"
+
+
+def get_language_fonts(language_code: str) -> List[str]:
+    """Get font families for a language."""
+    lang_support = LanguageSupport()
+    return lang_support.get_default_fonts(language_code)

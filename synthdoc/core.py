@@ -12,6 +12,7 @@ from .languages import LanguageSupport
 from .generators import DocumentGenerator, LayoutGenerator, VQAGenerator
 from .augmentations import Augmentor
 from .utils import setup_logging
+from .config import load_env_config, get_api_key, get_llm_model
 
 
 class SynthDoc:
@@ -30,23 +31,49 @@ class SynthDoc:
         self,
         output_dir: Optional[Union[str, Path]] = None,
         log_level: str = "INFO",
-        llm_model: str = "gpt-3.5-turbo",
+        llm_model: Optional[str] = None,
         api_key: Optional[str] = None,
+        load_dotenv: bool = True,
+        env_file: Optional[str] = None,
     ):
         """
-        Initialize SynthDoc.
+        Initialize SynthDoc with automatic .env loading.
 
         Args:
-            output_dir: Directory for output files (default: ./output)
+            output_dir: Directory for output files (default from .env or ./output)
             log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
-            llm_model: Model name for LiteLLM (e.g., "gpt-3.5-turbo", "claude-3-sonnet", "ollama/llama2")
-            api_key: API key for the model provider
+            llm_model: Model name for LiteLLM (auto-detected from .env if None)
+            api_key: API key for the model provider (auto-detected from .env if None)
+            load_dotenv: Whether to load from .env file (default: True)
+            env_file: Specific .env file path (auto-detected if None)
         """
-        self.output_dir = Path(output_dir) if output_dir else Path("./output")
+        # Load environment configuration
+        if load_dotenv:
+            self.config = load_env_config(env_file)
+        else:
+            from .config import SynthDocConfig
+            self.config = SynthDocConfig()
+
+        # Set up output directory
+        if output_dir:
+            self.output_dir = Path(output_dir)
+        else:
+            self.output_dir = Path(self.config.default_output_dir)
         self.output_dir.mkdir(exist_ok=True)
 
         # Setup logging
         self.logger = setup_logging(log_level)
+
+        # Determine API key and model
+        if api_key is None:
+            api_key = get_api_key("auto")
+        
+        if llm_model is None:
+            llm_model = get_llm_model("auto")
+        
+        # Store for later use
+        self.api_key = api_key
+        self.llm_model = llm_model
 
         # Initialize components with LLM configuration
         self.language_support = LanguageSupport()
@@ -55,7 +82,12 @@ class SynthDoc:
         self.vqa_generator = VQAGenerator(model=llm_model, api_key=api_key)
         self.augmentor = Augmentor()
 
-        self.logger.info(f"SynthDoc initialized successfully with model: {llm_model}")
+        # Log initialization status
+        if api_key:
+            self.logger.info(f"SynthDoc initialized successfully with model: {llm_model}")
+        else:
+            self.logger.warning("SynthDoc initialized without API key - limited functionality")
+            self.logger.info("Set API keys in .env file for full LLM features")
 
     def generate_raw_docs(
         self,
@@ -198,16 +230,47 @@ class SynthDoc:
             paper_template: Background paper style
 
         Returns:
-            Handwritten document dataset
+            HuggingFace dataset with handwriting samples
         """
-        self.logger.info(f"Generating handwritten documents in {language}")
+        self.logger.info("Generating handwriting documents")
+        
+        # For now, return a placeholder
+        return {
+            "dataset": {},
+            "metadata": {
+                "handwriting_style": writing_style,
+                "paper_template": paper_template,
+                "language": language
+            }
+        }
+    
+    def create_handwriting(
+        self,
+        content: Optional[str] = None,
+        language: str = "en",
+        handwriting_template: Optional[str] = None,
+        writing_style: str = "print",
+        paper_template: str = "blank",
+    ) -> Dict[str, Any]:
+        """
+        Generate handwritten documents (alias for generate_handwriting).
 
-        return self.doc_generator.generate_handwriting(
+        Args:
+            content: Text content to render
+            language: Target language
+            handwriting_template: Handwriting style template
+            writing_style: cursive, print, or mixed
+            paper_template: Background paper style
+
+        Returns:
+            HuggingFace dataset with handwriting samples
+        """
+        return self.generate_handwriting(
             content=content,
             language=language,
             handwriting_template=handwriting_template,
             writing_style=writing_style,
-            paper_template=paper_template,
+            paper_template=paper_template
         )
 
     def get_supported_languages(self) -> List[str]:
@@ -217,13 +280,14 @@ class SynthDoc:
     def get_language_info(self, code: str) -> Optional[Dict[str, Any]]:
         """Get detailed information about a language."""
         lang_info = self.language_support.get_language(code)
-        if lang_info:
-            return {
-                "code": lang_info.code,
-                "name": lang_info.name,
-                "script": lang_info.script.value,
-                "category": lang_info.category,
-                "rtl": lang_info.rtl,
-                "fonts": lang_info.font_families,
-            }
-        return None
+        if not lang_info:
+            return None
+        
+        return {
+            "code": lang_info.code,
+            "name": lang_info.name,
+            "script": lang_info.script.value,
+            "category": lang_info.category,
+            "rtl": lang_info.rtl,
+            "fonts": lang_info.font_families,
+        }

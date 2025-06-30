@@ -170,17 +170,30 @@ pip install -e .[llm]
 
 ## Quick Start
 
-### Basic Usage with LLM Integration
+### Setup with .env Configuration (Recommended)
 
+1. **Install SynthDoc**:
+```bash
+pip install synthdoc[llm]  # Includes LLM support
+```
+
+2. **Configure environment**:
+```bash
+# Copy the environment template
+cp env.template .env
+
+# Edit .env file and add your API keys
+# OPENAI_API_KEY=your_openai_key_here
+# GROQ_API_KEY=your_groq_key_here
+# etc.
+```
+
+3. **Use SynthDoc with automatic configuration**:
 ```python
 from synthdoc import SynthDoc
-import os
 
-# Initialize SynthDoc with your preferred LLM
-synth = SynthDoc(
-    llm_model="gpt-3.5-turbo",  # or "claude-3-sonnet", "ollama/llama2", etc.
-    api_key=os.getenv("OPENAI_API_KEY")  # Set your API key
-)
+# SynthDoc automatically loads from .env file
+synth = SynthDoc()  # API keys and models auto-detected
 
 # Generate raw documents using LLM
 documents = synth.generate_raw_docs(
@@ -204,22 +217,45 @@ vqa_dataset = synth.generate_vqa(
 )
 ```
 
-### Using Different LLM Providers
-
-SynthDoc uses [LiteLLM](https://github.com/BerriAI/litellm) for unified LLM access:
+### Environment Status Check
 
 ```python
-# OpenAI GPT models
-synth_openai = SynthDoc(llm_model="gpt-3.5-turbo", api_key=openai_key)
+from synthdoc import print_environment_status
 
-# Anthropic Claude models  
-synth_claude = SynthDoc(llm_model="claude-3-sonnet-20240229", api_key=anthropic_key)
+# Check your configuration
+print_environment_status()
+```
+
+### Using Different LLM Providers
+
+SynthDoc uses [LiteLLM](https://github.com/BerriAI/litellm) for unified LLM access. Configure providers in `.env`:
+
+```bash
+# .env file configuration
+OPENAI_API_KEY=your_openai_key
+ANTHROPIC_API_KEY=your_anthropic_key  
+GROQ_API_KEY=your_groq_key
+DEFAULT_LLM_MODEL=gpt-4o-mini
+```
+
+```python
+# Automatic provider selection (uses .env)
+synth = SynthDoc()  # Auto-detects best available provider
+
+# Manual provider override
+synth_openai = SynthDoc(llm_model="gpt-4o-mini")
+synth_claude = SynthDoc(llm_model="claude-3-5-sonnet-20241022")
+synth_groq = SynthDoc(llm_model="groq/llama-3-8b-8192")
 
 # Local Ollama models (no API key needed)
 synth_ollama = SynthDoc(llm_model="ollama/llama2")
+```
 
-# Azure OpenAI
-synth_azure = SynthDoc(llm_model="azure/gpt-35-turbo", api_key=azure_key)
+### Manual API Key Override (Not Recommended)
+
+```python
+# You can still manually pass API keys if needed
+synth = SynthDoc(llm_model="gpt-4o-mini", api_key="your-key-here")
 ```
 
 ### Fallback Mode (No LLM)
@@ -227,11 +263,14 @@ synth_azure = SynthDoc(llm_model="azure/gpt-35-turbo", api_key=azure_key)
 SynthDoc works without LLM integration using sample content:
 
 ```python
-# Initialize without API key for basic functionality
-synth = SynthDoc()
+# Initialize without API keys in .env file
+synth = SynthDoc()  # Will use fallback mode if no API keys found
 
 # Still generates documents but with template content
 documents = synth.generate_raw_docs(language="en", num_pages=2)
+
+# Disable automatic .env loading if needed
+synth = SynthDoc(load_dotenv=False)
 ```
 
 ## Contributing
@@ -244,12 +283,13 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## Roadmap
 
-- [ ] Implement core document generation pipeline
-    - [ ] Integrate LLMs for content generation
+- [x] Implement core document generation pipeline
+    - [x] Integrate LLMs for content generation
+    - [x] Document rendering (text to images)
     - [ ] Add docling and MinerU support
-- [ ] Add multi-language font support
-- [ ] Develop layout augmentation engine
-- [ ] Create VQA generation module
-- [ ] Implement handwriting synthesis
-- [ ] Add comprehensive testing suite
-- [ ] Create documentation and tutorials
+- [x] Add multi-language font support
+- [x] Develop layout augmentation engine
+- [x] Create VQA generation module
+- [x] Implement handwriting synthesis
+- [x] Add comprehensive testing suite
+- [x] Create documentation and tutorials

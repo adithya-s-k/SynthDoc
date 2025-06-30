@@ -1,0 +1,76 @@
+{
+  "citation": "",
+  "description": "",
+  "features": {
+    "imagewidth": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "pdf_name": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "page_number": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "markdown": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "html": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "layout": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "lines": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "images": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "equations": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "tables": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "page_size": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "content_list": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "base_layout_detection": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "pdf_info": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "system_prompt": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "response": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "image_path": {
+      "dtype": "string",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": ""
+}

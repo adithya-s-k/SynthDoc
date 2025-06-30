@@ -33,7 +33,7 @@ def generate(
         [], "--augment", "-a", help="Augmentation techniques"
     ),
     model: str = typer.Option(
-        "gpt-3.5-turbo", "--model", "-m", help="LLM model for content generation"
+        "gpt-4o-mini", "--model", "-m", help="LLM model for content generation"
     ),
     api_key: Optional[str] = typer.Option(
         None, "--api-key", help="API key for LLM provider"
@@ -87,7 +87,7 @@ def layout(
         [], "--augment", "-a", help="Augmentation techniques"
     ),
     model: str = typer.Option(
-        "gpt-3.5-turbo", "--model", "-m", help="LLM model for content generation"
+        "gpt-4o-mini", "--model", "-m", help="LLM model for content generation"
     ),
     api_key: Optional[str] = typer.Option(
         None, "--api-key", help="API key for LLM provider"
@@ -141,7 +141,7 @@ def vqa(
         ["easy", "medium"], "--difficulty", "-d", help="Difficulty levels"
     ),
     model: str = typer.Option(
-        "gpt-3.5-turbo", "--model", "-m", help="LLM model for VQA generation"
+        "gpt-4o-mini", "--model", "-m", help="LLM model for VQA generation"
     ),
     api_key: Optional[str] = typer.Option(
         None, "--api-key", help="API key for LLM provider"

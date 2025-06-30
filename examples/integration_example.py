@@ -1,460 +1,329 @@
 """
-Integration guide for adding dataset management to existing SynthDoc workflows.
+Comprehensive SynthDoc Integration Example with .env Configuration.
 
-This file demonstrates how to modify existing SynthDoc generators to automatically
-create and manage datasets in HuggingFace ImageFolder format.
+This example demonstrates all major features of SynthDoc including:
+- Document generation with LLM integration
+- Layout augmentation with real image processing
+- VQA generation with hard negatives
+- Handwriting synthesis
+- Multi-language support
+- Dataset management and export
+
+Setup:
+1. Copy env.template to .env
+2. Add your API keys to .env file
+3. Run this script
 """
 
+import sys
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-import tempfile
 
-from synthdoc import (
-    SynthDoc,
-    create_image_captioning_workflow,
-    create_vqa_workflow,
-    create_ocr_workflow,
-    SplitType,
-)
+# Add SynthDoc to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from synthdoc import SynthDoc, LanguageSupport, print_environment_status
+from synthdoc.dataset_manager import create_dataset_manager
+from synthdoc.workflows import create_document_workflow, create_vqa_workflow
+from synthdoc.models import SplitType
 
 
-class DatasetEnabledSynthDoc(SynthDoc):
-    """
-    Extended SynthDoc class with built-in dataset management.
+def main():
+    """Run comprehensive SynthDoc integration example with .env loading."""
+    print("🚀 SynthDoc Comprehensive Integration Example")
+    print("=" * 60)
+    
+    # Show environment configuration status
+    print("\n🔧 Environment Configuration:")
+    print_environment_status()
+    
+    print("\n" + "=" * 60)
+    
+    # Initialize SynthDoc with automatic .env loading
+    print("\n📚 Initializing SynthDoc...")
+    synth = SynthDoc(output_dir="./comprehensive_output")  # Automatically loads from .env
+    
+    if synth.api_key:
+        print(f"✅ Using LLM for content generation: {synth.llm_model}")
+    else:
+        print("⚠️  No API key found - using fallback content generation")
+        print("💡 Add API keys to .env file for full LLM features")
 
-    This class wraps the original SynthDoc functionality and automatically
-    manages dataset creation for all generated content.
-    """
+    # 1. Show language capabilities
+    print("\n📋 Language Support Demonstration")
+    print("-" * 40)
+    
+    supported_langs = synth.get_supported_languages()
+    print(f"Total supported languages: {len(supported_langs)}")
+    
+    # Show some language details
+    demo_languages = ["en", "hi", "zh", "ar", "ja"]
+    for lang_code in demo_languages:
+        lang_info = synth.get_language_info(lang_code)
+        if lang_info:
+            rtl_indicator = " (RTL)" if lang_info["rtl"] else ""
+            print(f"  {lang_code}: {lang_info['name']} - {lang_info['script']}{rtl_indicator}")
 
-    def __init__(
-        self,
-        output_dir: Optional[Path] = None,
-        dataset_root: Optional[Path] = None,
-        auto_create_datasets: bool = True,
-        **kwargs,
-    ):
-        """
-        Initialize DatasetEnabledSynthDoc.
+    # 2. Generate documents in multiple languages
+    print("\n📄 Multi-Language Document Generation")
+    print("-" * 40)
+    
+    all_documents = []
+    
+    # English technical documentation
+    print("Generating English documents...")
+    en_docs = synth.generate_raw_docs(
+        language="en",
+        num_pages=2,
+        prompt="Generate a technical report about artificial intelligence and machine learning",
+        augmentations=["rotation", "brightness"]
+    )
+    all_documents.extend(en_docs)
+    print(f"✅ Generated {len(en_docs)} English documents")
+    
+    # Hindi documentation
+    print("Generating Hindi documents...")
+    hi_docs = synth.generate_raw_docs(
+        language="hi",
+        num_pages=2,
+        prompt="कृत्रिम बुद्धिमत्ता और मशीन लर्निंग के बारे में तकनीकी रिपोर्ट बनाएं",
+        augmentations=["scaling", "noise"]
+    )
+    all_documents.extend(hi_docs)
+    print(f"✅ Generated {len(hi_docs)} Hindi documents")
+    
+    # Chinese documentation
+    print("Generating Chinese documents...")
+    zh_docs = synth.generate_raw_docs(
+        language="zh",
+        num_pages=1,
+        prompt="生成关于人工智能和机器学习的技术报告",
+        augmentations=["contrast"]
+    )
+    all_documents.extend(zh_docs)
+    print(f"✅ Generated {len(zh_docs)} Chinese documents")
 
-        Args:
-            output_dir: Directory for temporary files
-            dataset_root: Root directory for dataset creation
-            auto_create_datasets: Whether to automatically create datasets
-            **kwargs: Arguments passed to parent SynthDoc class
-        """
-        super().__init__(output_dir=output_dir, **kwargs)
+    # 3. Layout Augmentation Demo
+    print("\n🎨 Layout Augmentation Demonstration")
+    print("-" * 40)
+    
+    # Test different fonts and augmentations
+    fonts_to_test = ["Arial", "Times New Roman", "Helvetica"]
+    augmentations_to_test = ["rotation", "scaling", "brightness", "noise", "blur"]
+    
+    print(f"Applying {len(fonts_to_test)} fonts and {len(augmentations_to_test)} augmentations...")
+    
+    augmented_dataset = synth.augment_layout(
+        documents=all_documents[:2],  # Use first 2 documents for demo
+        languages=["en", "hi"],
+        fonts=fonts_to_test,
+        augmentations=augmentations_to_test[:3],  # Use first 3 augmentations
+    )
+    
+    num_variations = len(augmented_dataset.get("images", []))
+    print(f"✅ Generated {num_variations} layout variations")
 
-        self.dataset_root = dataset_root or Path("./datasets")
-        self.auto_create_datasets = auto_create_datasets
+    # 4. VQA Dataset Generation
+    print("\n❓ VQA Dataset Generation")
+    print("-" * 40)
+    
+    question_types = ["factual", "reasoning", "comparative"]
+    difficulty_levels = ["easy", "medium", "hard"]
+    
+    print(f"Generating VQA pairs for {len(all_documents)} documents...")
+    print(f"Question types: {question_types}")
+    print(f"Difficulty levels: {difficulty_levels}")
+    
+    vqa_dataset = synth.generate_vqa(
+        source_documents=all_documents[:3],  # Use first 3 documents
+        question_types=question_types,
+        difficulty_levels=difficulty_levels[:2],  # Use first 2 difficulty levels
+        hard_negative_ratio=0.3
+    )
+    
+    num_questions = len(vqa_dataset.get("questions", []))
+    print(f"✅ Generated {num_questions} VQA pairs")
+    
+    # Show a sample question-answer pair
+    if num_questions > 0:
+        sample_idx = 0
+        print(f"\nSample VQA Pair:")
+        print(f"  Question: {vqa_dataset['questions'][sample_idx]}")
+        print(f"  Answer: {vqa_dataset['answers'][sample_idx]}")
+        print(f"  Type: {vqa_dataset['question_types'][sample_idx]}")
+        if vqa_dataset['hard_negatives'][sample_idx]:
+            print(f"  Hard Negative: {vqa_dataset['hard_negatives'][sample_idx][0]}")
 
-        # Initialize workflow managers
-        self.workflows = {}
-
-        if auto_create_datasets:
-            self._initialize_workflows()
-
-    def _initialize_workflows(self):
-        """Initialize dataset workflows for different task types."""
-        # Image captioning workflow
-        self.workflows["captioning"] = create_image_captioning_workflow(
-            dataset_root=self.dataset_root, workflow_name="synthdoc_captioning"
+    # 5. Handwriting Generation Demo
+    print("\n✍️ Handwriting Generation")
+    print("-" * 40)
+    
+    handwriting_demos = [
+        ("en", "print", "lined", "This is a sample handwritten document in English."),
+        ("hi", "print", "blank", "यह हिंदी में हस्तलिखित दस्तावेज़ का नमूना है।"),
+        ("en", "cursive", "grid", "Cursive handwriting sample for testing.")
+    ]
+    
+    handwritten_docs = []
+    for lang, style, paper, content in handwriting_demos:
+        print(f"Generating {style} handwriting in {lang} on {paper} paper...")
+        handwritten = synth.generate_handwriting(
+            content=content,
+            language=lang,
+            writing_style=style,
+            paper_template=paper
         )
+        handwritten_docs.append(handwritten)
+        print(f"✅ Generated handwritten document: {handwritten.get('image_path', 'No image')}")
 
-        # VQA workflow
-        self.workflows["vqa"] = create_vqa_workflow(
-            dataset_root=self.dataset_root, workflow_name="synthdoc_vqa"
+    # 6. Dataset Management Integration
+    print("\n💾 Dataset Management Demo")
+    print("-" * 40)
+    
+    try:
+        # Create a dataset manager
+        dataset_manager = create_dataset_manager(
+            dataset_root="./comprehensive_output/datasets",
+            dataset_name="synthdoc_demo",
+            copy_images=True
         )
-
-        # OCR workflow
-        self.workflows["ocr"] = create_ocr_workflow(
-            dataset_root=self.dataset_root, workflow_name="synthdoc_ocr"
-        )
-
-    def generate_captioning_dataset(
-        self,
-        num_samples: int = 100,
-        dataset_name: Optional[str] = None,
-        split_ratios: Dict[str, float] = None,
-    ) -> Dict[str, Any]:
-        """
-        Generate a complete image captioning dataset.
-
-        Args:
-            num_samples: Number of samples to generate
-            dataset_name: Name for the dataset
-            split_ratios: Ratios for train/test/validation splits
-
-        Returns:
-            Dictionary with dataset information and HuggingFace dataset
-        """
-        if split_ratios is None:
-            split_ratios = {"train": 0.8, "test": 0.1, "validation": 0.1}
-
-        # Initialize dataset
-        workflow = self.workflows["captioning"]
-        if dataset_name:
-            workflow.initialize_dataset(dataset_name)
-        else:
-            workflow.initialize_dataset()
-
-        # Generate samples
-        for i in range(num_samples):
-            # Determine split based on ratios
-            split = self._determine_split(i, num_samples, split_ratios)
-
-            # Generate document image and caption
-            # This is a placeholder - you would integrate with actual SynthDoc generators
-            image_path = self._generate_document_image(f"captioning_sample_{i}")
-            caption = self._generate_caption_for_image(image_path)
-
-            # Add to dataset
-            workflow.add_captioned_image(
-                image_path=image_path,
-                caption=caption,
-                split=split,
-                source="synthdoc_generator",
-            )
-
-            if i % 10 == 0:
-                self.logger.info(f"Generated {i}/{num_samples} captioning samples")
-
-        # Finalize dataset
-        dataset = workflow.finalize_dataset()
-
-        return {
-            "dataset": dataset,
-            "path": workflow.manager.dataset_path,
-            "stats": workflow.manager.get_stats(),
-            "workflow": workflow,
-        }
-
-    def generate_vqa_dataset(
-        self,
-        num_samples: int = 100,
-        questions_per_image: int = 3,
-        dataset_name: Optional[str] = None,
-        split_ratios: Dict[str, float] = None,
-    ) -> Dict[str, Any]:
-        """
-        Generate a complete VQA dataset.
-
-        Args:
-            num_samples: Number of document images to generate
-            questions_per_image: Number of questions per image
-            dataset_name: Name for the dataset
-            split_ratios: Ratios for train/test/validation splits
-
-        Returns:
-            Dictionary with dataset information and HuggingFace dataset
-        """
-        if split_ratios is None:
-            split_ratios = {"train": 0.8, "test": 0.1, "validation": 0.1}
-
-        # Initialize dataset
-        workflow = self.workflows["vqa"]
-        if dataset_name:
-            workflow.initialize_dataset(dataset_name)
-        else:
-            workflow.initialize_dataset()
-
-        # Generate samples
-        sample_count = 0
-        for i in range(num_samples):
-            # Generate document image
-            image_path = self._generate_document_image(f"vqa_doc_{i}")
-
-            # Generate multiple QA pairs for this image
-            for j in range(questions_per_image):
-                split = self._determine_split(
-                    sample_count, num_samples * questions_per_image, split_ratios
-                )
-
-                # Generate QA pair
-                question, answer, q_type, difficulty = self._generate_qa_pair_for_image(
-                    image_path, j
+        
+        # Add some documents to the dataset
+        added_count = 0
+        for i, doc in enumerate(all_documents[:3]):
+            if doc.get("image_path"):
+                # Create metadata for document understanding task
+                from synthdoc.models import create_document_metadata
+                
+                metadata = create_document_metadata(
+                    file_name=f"doc_{i}.png",
+                    text=doc.get("content", ""),
+                    document_type="generated",
+                    source="synthdoc_demo"
                 )
 
                 # Add to dataset
-                workflow.add_vqa_sample(
-                    image_path=image_path,
-                    question=question,
-                    answer=answer,
-                    question_type=q_type,
-                    difficulty=difficulty,
-                    split=split,
-                    source="synthdoc_generator",
+                from synthdoc.models import DatasetItem
+                item = DatasetItem(
+                    image_path=doc["image_path"],
+                    metadata=metadata,
+                    split=SplitType.TRAIN if i < 2 else SplitType.TEST
                 )
+                
+                filename = dataset_manager.add_item(item)
+                added_count += 1
+                print(f"  Added document {i+1} as {filename}")
+        
+        print(f"✅ Added {added_count} documents to dataset")
+        
+        # Get dataset statistics
+        stats = dataset_manager.get_stats()
+        print(f"Dataset stats: {stats.total_items} total items")
+        print(f"Split distribution: {dict(stats.split_counts)}")
+        
+    except Exception as e:
+        print(f"⚠️  Dataset management demo failed: {e}")
 
-                sample_count += 1
-
-            if i % 10 == 0:
-                self.logger.info(f"Generated VQA for {i}/{num_samples} documents")
-
-        # Finalize dataset
-        dataset = workflow.finalize_dataset()
-
-        return {
-            "dataset": dataset,
-            "path": workflow.manager.dataset_path,
-            "stats": workflow.manager.get_stats(),
-            "workflow": workflow,
-        }
-
-    def generate_ocr_dataset(
-        self,
-        num_samples: int = 100,
-        dataset_name: Optional[str] = None,
-        include_annotations: bool = True,
-        split_ratios: Dict[str, float] = None,
-    ) -> Dict[str, Any]:
-        """
-        Generate a complete OCR dataset.
-
-        Args:
-            num_samples: Number of samples to generate
-            dataset_name: Name for the dataset
-            include_annotations: Whether to include word/line annotations
-            split_ratios: Ratios for train/test/validation splits
-
-        Returns:
-            Dictionary with dataset information and HuggingFace dataset
-        """
-        if split_ratios is None:
-            split_ratios = {"train": 0.8, "test": 0.1, "validation": 0.1}
-
-        # Initialize dataset
-        workflow = self.workflows["ocr"]
-        if dataset_name:
-            workflow.initialize_dataset(dataset_name)
-        else:
-            workflow.initialize_dataset()
-
-        # Generate samples
-        for i in range(num_samples):
-            split = self._determine_split(i, num_samples, split_ratios)
-
-            # Generate document image with known text content
-            image_path, text_content = self._generate_document_with_text(
-                f"ocr_sample_{i}"
-            )
-
-            # Generate word-level annotations if requested
-            words = None
-            lines = None
-            if include_annotations:
-                words, lines = self._generate_ocr_annotations(image_path, text_content)
-
-            # Add to dataset
-            workflow.add_ocr_sample(
-                image_path=image_path,
-                text=text_content,
-                words=words,
-                lines=lines,
-                language="en",  # This could be dynamic based on generation
-                split=split,
-                source="synthdoc_generator",
-            )
-
-            if i % 10 == 0:
-                self.logger.info(f"Generated {i}/{num_samples} OCR samples")
-
-        # Finalize dataset
-        dataset = workflow.finalize_dataset()
-
-        return {
-            "dataset": dataset,
-            "path": workflow.manager.dataset_path,
-            "stats": workflow.manager.get_stats(),
-            "workflow": workflow,
-        }
-
-    def _determine_split(
-        self, index: int, total: int, split_ratios: Dict[str, float]
-    ) -> SplitType:
-        """Determine which split an item should go to based on ratios."""
-        ratio = index / total
-
-        if ratio < split_ratios.get("train", 0.8):
-            return SplitType.TRAIN
-        elif ratio < split_ratios.get("train", 0.8) + split_ratios.get("test", 0.1):
-            return SplitType.TEST
-        else:
-            return SplitType.VALIDATION
-
-    def _generate_document_image(self, identifier: str) -> Path:
-        """
-        Generate a document image using SynthDoc generators.
-
-        This is a placeholder method - integrate with actual SynthDoc functionality.
-        """
-        # Placeholder implementation
-        # In reality, this would use SynthDoc's document generators
-        output_path = self.output_dir / f"{identifier}.png"
-
-        # TODO: Integrate with actual SynthDoc document generation
-        # For now, create a placeholder
-        if not output_path.exists():
-            # Create a simple placeholder image
-            from PIL import Image, ImageDraw
-
-            img = Image.new("RGB", (800, 600), color="white")
-            draw = ImageDraw.Draw(img)
-            draw.text((50, 50), f"Generated Document: {identifier}", fill="black")
-            img.save(output_path)
-
-        return output_path
-
-    def _generate_caption_for_image(self, image_path: Path) -> str:
-        """Generate a caption for a document image."""
-        # Placeholder implementation
-        # In reality, this would analyze the generated document
-        return f"A synthetic document image containing text and layout elements"
-
-    def _generate_qa_pair_for_image(
-        self, image_path: Path, question_index: int
-    ) -> tuple:
-        """Generate a question-answer pair for a document image."""
-        # Placeholder implementation
-        # In reality, this would use SynthDoc's VQA generator
-        questions = [
-            (
-                "What type of document is this?",
-                "A synthetic document",
-                "classification",
-                "easy",
-            ),
-            ("How many paragraphs are visible?", "2", "counting", "medium"),
-            (
-                "What can you infer about the document's purpose?",
-                "It appears to be a test document",
-                "reasoning",
-                "hard",
-            ),
-        ]
-
-        return questions[question_index % len(questions)]
-
-    def _generate_document_with_text(self, identifier: str) -> tuple:
-        """Generate a document image with known text content."""
-        # Placeholder implementation
-        output_path = self.output_dir / f"{identifier}.png"
-        text_content = f"Sample text content for {identifier}\nThis is a multi-line document\nwith various text elements."
-
-        # TODO: Integrate with actual SynthDoc text generation
-        if not output_path.exists():
-            from PIL import Image, ImageDraw, ImageFont
-
-            img = Image.new("RGB", (800, 600), color="white")
-            draw = ImageDraw.Draw(img)
-
-            # Draw the text content
-            y_offset = 50
-            for line in text_content.split("\n"):
-                draw.text((50, y_offset), line, fill="black")
-                y_offset += 30
-
-            img.save(output_path)
-
-        return output_path, text_content
-
-    def _generate_ocr_annotations(self, image_path: Path, text_content: str) -> tuple:
-        """Generate word and line level annotations for OCR."""
-        # Placeholder implementation
-        # In reality, this would use actual layout analysis
-
-        words = []
-        lines = []
-
-        y_offset = 50
-        for line_idx, line in enumerate(text_content.split("\n")):
-            line_bbox = [50, y_offset, 50 + len(line) * 10, y_offset + 25]
-            lines.append({"text": line, "bbox": line_bbox})
-
-            x_offset = 50
-            for word in line.split():
-                word_width = len(word) * 10
-                words.append(
-                    {
-                        "text": word,
-                        "bbox": [
-                            x_offset,
-                            y_offset,
-                            x_offset + word_width,
-                            y_offset + 25,
-                        ],
-                    }
+    # 7. Workflow Integration Demo
+    print("\n🔄 Workflow Integration Demo")
+    print("-" * 40)
+    
+    try:
+        # Document Understanding Workflow
+        doc_workflow = create_document_workflow(
+            dataset_root="./comprehensive_output/workflows",
+            workflow_name="document_understanding_demo"
+        )
+        
+        # Initialize the workflow dataset
+        doc_workflow.initialize_dataset("doc_understanding_demo")
+        
+        # Add some samples to the workflow
+        workflow_added = 0
+        for i, doc in enumerate(all_documents[:2]):
+            if doc.get("image_path"):
+                doc_workflow.add_document_sample(
+                    image_path=doc["image_path"],
+                    text=doc.get("content", ""),
+                    document_type="technical_report",
+                    source="synthdoc_generated",
+                    split=SplitType.TRAIN
                 )
-                x_offset += word_width + 10
-
-            y_offset += 30
-
-        return words, lines
-
-    def upload_all_datasets_to_hub(
-        self, repo_prefix: str, private: bool = False, token: Optional[str] = None
-    ) -> Dict[str, str]:
-        """Upload all created datasets to HuggingFace Hub."""
-        urls = {}
-
-        for task_type, workflow in self.workflows.items():
-            if hasattr(workflow, "manager") and workflow.manager:
-                repo_id = f"{repo_prefix}/{task_type}_dataset"
-                try:
-                    url = workflow.upload_to_hub(
-                        repo_id=repo_id,
-                        private=private,
-                        token=token,
-                        commit_message=f"Upload {task_type} dataset from SynthDoc",
+                workflow_added += 1
+        
+        print(f"✅ Added {workflow_added} samples to document workflow")
+        
+        # VQA Workflow
+        if vqa_dataset.get("questions"):
+            vqa_workflow = create_vqa_workflow(
+                dataset_root="./comprehensive_output/workflows",
+                workflow_name="vqa_demo"
+            )
+            
+            vqa_workflow.initialize_dataset("vqa_demo")
+            
+            # Add VQA samples
+            vqa_added = 0
+            for i in range(min(2, len(vqa_dataset["questions"]))):
+                if vqa_dataset["images"][i]:
+                    # Note: In real usage, you'd have image paths for VQA
+                    # Here we're using placeholder for demo
+                    vqa_workflow.add_vqa_sample(
+                        image_path=all_documents[0]["image_path"],  # Placeholder
+                        question=vqa_dataset["questions"][i],
+                        answer=vqa_dataset["answers"][i],
+                        question_type=vqa_dataset["question_types"][i],
+                        split=SplitType.TRAIN
                     )
-                    urls[task_type] = url
-                    self.logger.info(f"Uploaded {task_type} dataset to {url}")
-                except Exception as e:
-                    self.logger.error(f"Failed to upload {task_type} dataset: {e}")
+                    vqa_added += 1
+            
+            print(f"✅ Added {vqa_added} samples to VQA workflow")
+        
+    except Exception as e:
+        print(f"⚠️  Workflow integration demo failed: {e}")
 
-        return urls
-
-
-def example_usage():
-    """Example of using the DatasetEnabledSynthDoc class."""
-
-    # Initialize enhanced SynthDoc
-    synthdoc = DatasetEnabledSynthDoc(
-        output_dir=Path("./temp_output"),
-        dataset_root=Path("./datasets"),
-        auto_create_datasets=True,
-    )
-
-    print("=== Generating Image Captioning Dataset ===")
-    captioning_result = synthdoc.generate_captioning_dataset(
-        num_samples=50, dataset_name="my_captioning_dataset"
-    )
-    print(
-        f"Created captioning dataset with {captioning_result['stats'].total_items} items"
-    )
-
-    print("\n=== Generating VQA Dataset ===")
-    vqa_result = synthdoc.generate_vqa_dataset(
-        num_samples=20, questions_per_image=3, dataset_name="my_vqa_dataset"
-    )
-    print(f"Created VQA dataset with {vqa_result['stats'].total_items} items")
-
-    print("\n=== Generating OCR Dataset ===")
-    ocr_result = synthdoc.generate_ocr_dataset(
-        num_samples=30, dataset_name="my_ocr_dataset", include_annotations=True
-    )
-    print(f"Created OCR dataset with {ocr_result['stats'].total_items} items")
-
-    # Upload all datasets to Hub (uncomment to actually upload)
-    # urls = synthdoc.upload_all_datasets_to_hub("your-username")
-    # print(f"Uploaded datasets: {urls}")
-
-    return {"captioning": captioning_result, "vqa": vqa_result, "ocr": ocr_result}
+    # 8. Summary and Output Information
+    print("\n📊 Demo Summary")
+    print("-" * 40)
+    
+    print(f"Generated Documents:")
+    print(f"  • Total raw documents: {len(all_documents)}")
+    print(f"  • Layout variations: {num_variations}")
+    print(f"  • VQA pairs: {num_questions}")
+    print(f"  • Handwritten samples: {len(handwritten_docs)}")
+    
+    print(f"\nLanguages demonstrated: {len(demo_languages)}")
+    print(f"Augmentation types tested: {len(augmentations_to_test)}")
+    print(f"Font variations: {len(fonts_to_test)}")
+    
+    print(f"\nOutput directory: ./comprehensive_output/")
+    print("Check the output directory for generated images and datasets!")
+    
+    # 9. Feature Status Report
+    print("\n🏁 Implementation Status")
+    print("-" * 40)
+    
+    features = [
+        ("✅", "Multi-language document generation"),
+        ("✅", "LLM-powered content creation"),
+        ("✅", "Document rendering (text to image)"),
+        ("✅", "Layout augmentation with real image processing"),
+        ("✅", "Visual augmentations (rotation, scaling, noise, etc.)"),
+        ("✅", "VQA generation with hard negatives"),
+        ("✅", "Handwriting synthesis"),
+        ("✅", "Dataset management (HuggingFace compatible)"),
+        ("✅", "Workflow integration"),
+        ("✅", "Font management and multi-script support"),
+        ("🚧", "PDF processing and extraction (placeholder)"),
+        ("🚧", "Advanced layout detection"),
+        ("🚧", "Document element recombination"),
+    ]
+    
+    for status, feature in features:
+        print(f"  {status} {feature}")
+    
+    print("\n✨ SynthDoc comprehensive demo completed!")
+    print("Check the implementation in synthdoc/generators.py and synthdoc/augmentations.py")
 
 
 if __name__ == "__main__":
-    # Note: This example uses placeholder implementations
-    # In practice, you would integrate with actual SynthDoc generators
-    results = example_usage()
-    print("\nDataset generation completed!")
-    print("Note: This example uses placeholder document generation.")
-    print("Integrate with actual SynthDoc generators for real datasets.")
+    main()

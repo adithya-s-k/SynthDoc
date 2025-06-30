@@ -13,10 +13,10 @@ from synthdoc import SynthDoc
 def main():
     """Demonstrate SynthDoc with different LLM providers."""
 
-    # Example 1: Using OpenAI GPT-3.5-turbo
-    print("=== Example 1: OpenAI GPT-3.5-turbo ===")
+    # Example 1: Using OpenAI GPT-4o-mini
+    print("=== Example 1: OpenAI GPT-4o-mini ===")
     synth_openai = SynthDoc(
-        llm_model="gpt-3.5-turbo",
+        llm_model="gpt-4o-mini",
         api_key=os.getenv("OPENAI_API_KEY"),  # Set this environment variable
     )
 
@@ -44,7 +44,7 @@ def main():
     print("\n=== Example 2: Anthropic Claude ===")
     if os.getenv("ANTHROPIC_API_KEY"):
         synth_claude = SynthDoc(
-            llm_model="claude-3-sonnet-20240229", api_key=os.getenv("ANTHROPIC_API_KEY")
+            llm_model="claude-3-5-sonnet-20241022", api_key=os.getenv("ANTHROPIC_API_KEY")
         )
 
         docs_claude = synth_claude.generate_raw_docs(
@@ -78,7 +78,7 @@ def main():
     # Example 4: Working without LLM (fallback mode)
     print("\n=== Example 4: Fallback mode (no LLM) ===")
     synth_fallback = SynthDoc(
-        llm_model="gpt-3.5-turbo",
+        llm_model="gpt-4o-mini",
         api_key=None,  # No API key provided
     )
 

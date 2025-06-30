@@ -1,0 +1,25 @@
+{
+  "workflow_type": "raw_document_generation",
+  "total_cost": 0.0,
+  "api_calls": 2,
+  "token_usage": {
+    "prompt_tokens": 740,
+    "completion_tokens": 1762,
+    "total_tokens": 2502
+  },
+  "tokens_used": 2502,
+  "average_cost_per_call": 0.0,
+  "num_samples": 1,
+  "config": {
+    "language": "es",
+    "num_pages": 1,
+    "prompt": "Testing Spanish document generation with updated workflow",
+    "include_graphs": false,
+    "include_tables": false,
+    "include_ai_images": false,
+    "output_format": "huggingface"
+  },
+  "generated_files": [
+    "document_es_11318.pdf_page_1.png"
+  ]
+}

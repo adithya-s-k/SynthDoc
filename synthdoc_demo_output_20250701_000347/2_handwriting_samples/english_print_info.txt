@@ -1,0 +1,6 @@
+Handwriting Sample: english_print
+Style: print
+Language: en
+Samples: 2
+Generated: 2025-07-01 00:04:06.284033
+Files: 2

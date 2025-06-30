@@ -1,0 +1,6 @@
+Handwriting Sample: multilingual_sample
+Style: default
+Language: en
+Samples: 3
+Generated: 2025-07-01 00:04:06.493876
+Files: 3
