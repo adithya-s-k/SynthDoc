@@ -3,6 +3,7 @@ import random
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
+from datasets import Dataset
 from ..base import BaseWorkflow
 from ...models import LayoutAugmentationConfig, WorkflowResult
 from ...languages import load_language_font
@@ -38,14 +39,80 @@ class LayoutAugmenter(BaseWorkflow):
                     )
                     all_samples.extend(samples)
 
-        dataset = self._create_hf_dataset(
-            all_samples, 
-            {
-                "workflow": "layout_augmentation", 
-                "config": config.dict(),
-                "total_variations": len(all_samples)
-            }
-        )
+        # Create comprehensive dataset using README schema
+        if not all_samples:
+            dataset = Dataset.from_dict({})
+        else:
+            # Extract data for comprehensive dataset creation
+            images = [s['image'] for s in all_samples]
+            image_paths = [s.get('image_path', '') for s in all_samples]
+            pdf_names = [s.get('pdf_name', f"layout_doc_{i}") for i, s in enumerate(all_samples)]
+            page_numbers = [s.get('page_number', 0) for s in all_samples]
+            markdown_content = [s.get('markdown', '') for s in all_samples]
+            html_content = [s.get('html', '') for s in all_samples]
+            
+            # Parse layout annotations - ensure we have proper data structures
+            layout_annotations = []
+            line_annotations = []
+            embedded_images = []
+            equations = []
+            tables = []
+            content_lists = []
+            
+            for s in all_samples:
+                # Create simple layout annotations for augmented documents
+                layout_data = [{
+                    "type": "text_block",
+                    "bbox": [60, 60, 740, 800],
+                    "confidence": 0.95,
+                    "text": s.get('content', '')[:100] + "..." if len(s.get('content', '')) > 100 else s.get('content', '')
+                }]
+                
+                lines_data = [{
+                    "text": line,
+                    "bbox": [60, 60 + i*24, 740, 84 + i*24],
+                    "confidence": 0.95
+                } for i, line in enumerate(s.get('content', '').split('\n')[:20])]
+                
+                # No embedded images, equations, or tables for layout augmentation
+                images_data = []
+                equations_data = []
+                tables_data = []
+                
+                # Simple content list
+                content_data = [{
+                    "id": i+1,
+                    "type": "text",
+                    "content": line,
+                    "bbox": [60, 60 + i*24, 740, 84 + i*24]
+                } for i, line in enumerate(s.get('content', '').split('\n')[:10])]
+                
+                layout_annotations.append(layout_data)
+                line_annotations.append(lines_data)
+                embedded_images.append(images_data)
+                equations.append(equations_data)
+                tables.append(tables_data)
+                content_lists.append(content_data)
+            
+            dataset = self._create_comprehensive_hf_dataset(
+                images=images,
+                image_paths=image_paths,
+                pdf_names=pdf_names,
+                page_numbers=page_numbers,
+                markdown_content=markdown_content,
+                html_content=html_content,
+                layout_annotations=layout_annotations,
+                line_annotations=line_annotations,
+                embedded_images=embedded_images,
+                equations=equations,
+                tables=tables,
+                content_lists=content_lists,
+                additional_metadata={
+                    "workflow": "layout_augmentation",
+                    "config": config.dict(),
+                    "total_variations": len(all_samples)
+                }
+            )
 
         output_files = [sample.get("image_path") for sample in all_samples if sample.get("image_path")]
 
@@ -118,14 +185,19 @@ class LayoutAugmenter(BaseWorkflow):
                 
                 variation = {
                     "id": f"layout_{layout_idx}_{font_name}_{layout_type}",
+                    "image": image,  # Include actual PIL Image for image dataset
                     "image_path": img_path,
+                    "text": content,  # Add text content for image dataset
+                    "markdown": content,  # Also include as markdown
                     "original_document": str(doc_path),
                     "language": language.value if hasattr(language, 'value') else str(language),
                     "font": font_name,
                     "layout_type": layout_type,
                     "augmentations": [aug.value if hasattr(aug, 'value') else str(aug) for aug in (config.augmentations or [])],
-                    "image_width": image.width,
-                    "image_height": image.height,
+                    "imagewidth": image.width,
+                    "imageheight": image.height,
+                    "page_number": 0,
+                    "pdf_name": Path(str(doc_path)).stem,
                     "layout_info": layout_info,
                     "content": content,
                     "metadata": {

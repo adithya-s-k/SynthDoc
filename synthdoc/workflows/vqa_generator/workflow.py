@@ -52,29 +52,78 @@ class VQAGenerator(BaseWorkflow):
             all_hard_negatives.extend(hard_negatives)
             all_metadata.extend(metadata)
         
-        # Create dataset samples
+                # Create dataset samples for image-based VQA
         samples = []
         for i in range(len(all_questions)):
+            # Handle both document paths and image objects
+            doc_path = all_metadata[i]["document_path"]
+            
+            # Try to load image if document is an image file
+            image = None
+            if isinstance(doc_path, str) and doc_path.endswith(('.png', '.jpg', '.jpeg')):
+                try:
+                    from PIL import Image
+                    image = Image.open(doc_path)
+                except Exception as e:
+                    print(f"⚠️ Could not load image {doc_path}: {e}")
+            
             sample = {
                 "id": f"vqa_{i}",
-                "document_path": all_metadata[i]["document_path"],
+                "image": image,  # Include image for VQA
+                "text": self._extract_document_content(doc_path),  # Include text content
+                "document_path": doc_path,
                 "question": all_questions[i],
                 "answer": all_answers[i],
                 "hard_negatives": all_hard_negatives[i] if i < len(all_hard_negatives) else [],
                 "question_type": all_metadata[i]["question_type"],
                 "difficulty": all_metadata[i]["difficulty"],
-                "similarity_scores": all_metadata[i].get("similarity_scores", [])
+                "similarity_scores": all_metadata[i].get("similarity_scores", []),
+                "metadata": {
+                    "source": str(doc_path),
+                    "language": "en",  # Default language
+                    "question_type": all_metadata[i]["question_type"]
+                }
             }
             samples.append(sample)
-        
-        dataset = self._create_hf_dataset(
-            samples, 
-            {
-                "workflow": "vqa_generation", 
-                "config": config.dict(),
-                "total_cost": self.cost_tracker.get_summary()
-            }
-        )
+
+        # Create comprehensive dataset using README schema
+        if not samples:
+            dataset = Dataset.from_dict({})
+        else:
+            # Extract data for comprehensive dataset creation
+            images = [s['image'] for s in samples]
+            image_paths = [s.get('image_path', '') for s in samples]
+            pdf_names = [s.get('pdf_name', f"vqa_doc_{i}") for i, s in enumerate(samples)]
+            page_numbers = [s.get('page_number', 0) for s in samples]
+            
+            # VQA-specific content with questions and answers
+            markdown_content = []
+            html_content = []
+            for s in samples:
+                q = s.get('question', '')
+                a = s.get('answer', '')
+                base_md = s.get('markdown', f"Document: {s.get('text', '')}")
+                base_html = s.get('html', f"<p>{s.get('text', '')}</p>")
+                
+                enhanced_md = f"{base_md}\n\n**Question:** {q}\n**Answer:** {a}"
+                enhanced_html = f"{base_html}<br><strong>Q:</strong> {q}<br><strong>A:</strong> {a}"
+                
+                markdown_content.append(enhanced_md)
+                html_content.append(enhanced_html)
+            
+            dataset = self._create_comprehensive_hf_dataset(
+                images=images,
+                image_paths=image_paths,
+                pdf_names=pdf_names,
+                page_numbers=page_numbers,
+                markdown_content=markdown_content,
+                html_content=html_content,
+                additional_metadata={
+                    "workflow": "vqa_generation",
+                    "config": config.dict(),
+                    "total_cost": self.cost_tracker.get_summary()
+                }
+            )
 
         return WorkflowResult(
             dataset=dataset,

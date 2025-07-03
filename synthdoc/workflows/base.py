@@ -3,6 +3,7 @@ from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
 from PIL import Image
 from datasets import Dataset
+import os
 
 
 class BaseWorkflow(ABC):
@@ -12,6 +13,50 @@ class BaseWorkflow(ABC):
     def process(self, config):
         """Process the workflow with given configuration and return WorkflowResult with HuggingFace Dataset."""
         pass
+
+    def _create_image_dataset(
+        self, samples: list, metadata: dict = None
+    ) -> Dataset:
+        """Create simplified image-focused HuggingFace Dataset."""
+        if not samples:
+            return Dataset.from_dict({})
+        
+        # Ensure all samples have the required 'image' field
+        processed_samples = []
+        for sample in samples:
+            if 'image' not in sample:
+                continue
+            
+            # Keep only essential fields for image datasets
+            image_sample = {
+                'image': sample['image'],
+                'text': sample.get('markdown', sample.get('text', '')),
+                'metadata': {
+                    'source': sample.get('pdf_name', 'unknown'),
+                    'page_number': sample.get('page_number', 0),
+                    'language': sample.get('language', 'en'),
+                    'width': sample.get('imagewidth', sample['image'].width if hasattr(sample['image'], 'width') else 0),
+                    'height': sample.get('imageheight', sample['image'].height if hasattr(sample['image'], 'height') else 0)
+                }
+            }
+            
+            # Add any additional fields that are commonly useful
+            if 'caption' in sample:
+                image_sample['caption'] = sample['caption']
+            if 'question' in sample and 'answer' in sample:
+                image_sample['questions'] = [sample['question']]
+                image_sample['answers'] = [sample['answer']]
+            
+            processed_samples.append(image_sample)
+        
+        # Create Dataset from processed samples
+        dataset = Dataset.from_list(processed_samples)
+        
+        # Add description to dataset info
+        if metadata:
+            dataset.info.description = f"SynthDoc Image Dataset: {metadata.get('workflow_type', 'unknown')}"
+            
+        return dataset
 
     def _create_hf_dataset(
         self, samples: list, metadata: dict = None
@@ -30,6 +75,47 @@ class BaseWorkflow(ABC):
             dataset.info.features = dataset.features
             
         return dataset
+
+    def push_to_hub(
+        self,
+        dataset: Dataset,
+        repo_id: str,
+        private: bool = False,
+        token: Optional[str] = None,
+        commit_message: Optional[str] = None
+    ) -> str:
+        """Push dataset to HuggingFace Hub as an image dataset."""
+        
+        # Get token from environment if not provided
+        if not token:
+            token = os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN")
+        
+        if not token:
+            raise ValueError(
+                "No HuggingFace token found. Please provide token parameter or set "
+                "HUGGINGFACE_TOKEN or HF_TOKEN environment variable."
+            )
+        
+        # Default commit message
+        if not commit_message:
+            commit_message = f"Upload SynthDoc image dataset with {len(dataset)} samples"
+        
+        try:
+            # Push to hub
+            dataset.push_to_hub(
+                repo_id=repo_id,
+                private=private,
+                token=token,
+                commit_message=commit_message
+            )
+            
+            hub_url = f"https://huggingface.co/datasets/{repo_id}"
+            print(f"✅ Successfully uploaded to: {hub_url}")
+            return hub_url
+            
+        except Exception as e:
+            print(f"❌ Failed to upload to HuggingFace Hub: {e}")
+            raise
 
     def _create_comprehensive_hf_dataset(
         self,
@@ -128,7 +214,23 @@ class BaseWorkflow(ABC):
         if not samples:
             return Dataset.from_dict({})
         
-        return Dataset.from_list(samples)
+        # Sanitize samples for Arrow compatibility (convert enums, complex objects to strings)
+        sanitized_samples = []
+        for sample in samples:
+            sanitized_sample = {}
+            for key, value in sample.items():
+                # Convert complex objects to JSON-serializable formats
+                if hasattr(value, 'value'):  # Enum objects
+                    sanitized_sample[key] = value.value
+                elif isinstance(value, list):
+                    sanitized_sample[key] = str(value)  # Convert lists to strings for Arrow compatibility
+                elif isinstance(value, dict):
+                    sanitized_sample[key] = str(value)  # Convert dicts to strings for Arrow compatibility
+                else:
+                    sanitized_sample[key] = value
+            sanitized_samples.append(sanitized_sample)
+        
+        return Dataset.from_list(sanitized_samples)
 
     def _create_layout_detection_metadata(self, layout_annotations: List[Dict], content_list: List[Dict]) -> Dict[str, Any]:
         """Create layout detection ground truth metadata."""

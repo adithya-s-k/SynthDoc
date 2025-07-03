@@ -1,7 +1,9 @@
 import random
 import os
+import time
 from typing import List, Dict, Any, Optional
 from PIL import Image, ImageDraw, ImageFont
+from datasets import Dataset
 from ..base import BaseWorkflow
 from ...models import HandwritingGenerationConfig, WorkflowResult
 from ...languages import load_language_font
@@ -17,6 +19,7 @@ class HandwritingGenerator(BaseWorkflow):
 
     def process(self, config: HandwritingGenerationConfig) -> WorkflowResult:
         """Generate handwritten documents based on configuration."""
+        start_time = time.time()
         print(f"✍️ Starting handwriting generation ({config.num_samples} samples)...")
         
         samples = []
@@ -31,11 +34,12 @@ class HandwritingGenerator(BaseWorkflow):
             image = self._render_handwriting(
                 text=content,
                 language=config.language,
-                style=config.handwriting_style
+                style=config.handwriting_style,
+                paper_template=config.paper_template
             )
             
             # Save image
-            img_filename = f"handwriting_{i}_{config.handwriting_style}.png"
+            img_filename = f"handwriting_{i}_{config.handwriting_style}_{config.paper_template}.png"
             img_path = os.path.join(self.save_dir, img_filename)
             image.save(img_path)
             
@@ -45,16 +49,18 @@ class HandwritingGenerator(BaseWorkflow):
             
             sample = {
                 "id": f"handwriting_{i}",
+                "image": image,
                 "image_path": img_path,
                 "text_content": content,
                 "handwriting_style": config.handwriting_style,
+                "paper_template": config.paper_template,
                 "language": config.language.value if hasattr(config.language, 'value') else str(config.language),
                 "augmentations": config.augmentations or [],
                 "image_width": image.width,
                 "image_height": image.height,
                 "metadata": {
                     "writing_style": config.handwriting_style,
-                    "paper_type": "lined",  # Default paper type
+                    "paper_type": config.paper_template,
                     "font_variation": random.choice(["regular", "bold", "italic"]),
                     "pen_color": random.choice(["blue", "black", "red"]),
                     "margin_left": 60,
@@ -63,14 +69,31 @@ class HandwritingGenerator(BaseWorkflow):
             }
             samples.append(sample)
 
-        dataset = self._create_hf_dataset(
-            samples, 
-            {
-                "workflow": "handwriting_generation", 
-                "config": config.dict(),
-                "total_samples": len(samples)
-            }
-        )
+        # Create comprehensive dataset using README schema
+        if not samples:
+            dataset = Dataset.from_dict({})
+        else:
+            # Extract data for comprehensive dataset creation
+            images = [s['image'] for s in samples]
+            image_paths = [s.get('image_path', '') for s in samples]
+            pdf_names = [s.get('pdf_name', f"handwriting_doc_{i}") for i, s in enumerate(samples)]
+            page_numbers = [s.get('page_number', 0) for s in samples]
+            markdown_content = [s.get('text_content', '') for s in samples]
+            html_content = [f"<p>{s.get('text_content', '')}</p>" for s in samples]
+            
+            dataset = self._create_comprehensive_hf_dataset(
+                images=images,
+                image_paths=image_paths,
+                pdf_names=pdf_names,
+                page_numbers=page_numbers,
+                markdown_content=markdown_content,
+                html_content=html_content,
+                additional_metadata={
+                    "workflow": "handwriting_generation",
+                    "config": config.dict(),
+                    "total_samples": len(samples)
+                }
+            )
 
         output_files = [sample["image_path"] for sample in samples if "image_path" in sample]
         
@@ -81,7 +104,7 @@ class HandwritingGenerator(BaseWorkflow):
                 "total_samples": len(samples),
                 "styles_used": [config.handwriting_style],
                 "languages": [config.language.value if hasattr(config.language, 'value') else str(config.language)],
-                "processing_time": time.time() - start_time if 'start_time' in locals() else 0
+                "processing_time": time.time() - start_time
             },
             num_samples=len(samples),
             output_files=output_files
@@ -117,11 +140,21 @@ class HandwritingGenerator(BaseWorkflow):
         contents = sample_contents.get(language_key, sample_contents["en"])
         return contents[sample_idx % len(contents)]
 
-    def _render_handwriting(self, text: str, language, style: str) -> Image.Image:
+    def _render_handwriting(self, text: str, language, style: str, paper_template: str = "lined") -> Image.Image:
         """Render text as handwriting with realistic variations."""
-        # Create lined paper background
+        # Create paper background based on template
         width, height = 800, 1000
-        image = self._create_lined_paper(width, height)
+        
+        if paper_template == "lined":
+            image = self._create_lined_paper(width, height)
+        elif paper_template == "grid":
+            image = self._create_grid_paper(width, height)
+        elif paper_template == "blank":
+            image = self._create_blank_paper(width, height)
+        else:
+            # Default to lined paper
+            image = self._create_lined_paper(width, height)
+            
         draw = ImageDraw.Draw(image)
         
         # Load language-appropriate font
@@ -180,40 +213,106 @@ class HandwritingGenerator(BaseWorkflow):
                     draw.text((word_x, word_y), word, fill=pen_color, font=font)
                     word_spacing += len(word) * 7 + 15  # Space between words
             else:
-                # Default handwriting style
+                # Default mixed style
                 draw.text((base_x, y_position), line, fill=pen_color, font=font)
             
-            y_offset += line_height + random.randint(-2, 5)
+            y_offset += line_height
         
-        # Add some realistic imperfections
+        # Add handwriting artifacts for realism
         self._add_handwriting_artifacts(image, draw)
         
         return image
 
     def _create_lined_paper(self, width: int, height: int) -> Image.Image:
-        """Create realistic lined paper background."""
+        """Create lined paper background."""
         image = Image.new('RGB', (width, height), color='white')
         draw = ImageDraw.Draw(image)
         
         # Draw horizontal lines
-        line_color = (200, 220, 255)  # Light blue
-        for y in range(80, height - 50, 25):
-            # Add slight line variation
-            start_x = 50 + random.randint(-2, 2)
-            end_x = width - 50 + random.randint(-2, 2)
-            draw.line([(start_x, y), (end_x, y)], fill=line_color, width=1)
+        line_spacing = 25
+        for y in range(80, height - 50, line_spacing):
+            # Add slight variations to make lines look more natural
+            line_color = random.choice(['lightblue', 'lightgray', '#e0e0ff'])
+            line_width = random.choice([1, 1, 2])  # Mostly thin lines, occasionally thicker
+            
+            # Draw slightly wavy line
+            points = []
+            for x in range(50, width - 50, 10):
+                y_offset = y + random.randint(-1, 1)
+                points.extend([x, y_offset])
+            
+            if len(points) >= 4:
+                draw.line(points, fill=line_color, width=line_width)
         
-        # Draw margin line
-        margin_color = (255, 200, 200)  # Light red
-        margin_x = 80 + random.randint(-1, 1)
-        draw.line([(margin_x, 50), (margin_x, height - 50)], fill=margin_color, width=2)
+        # Draw margin line (red line on left)
+        margin_x = 80
+        margin_color = random.choice(['red', 'darkred', '#ff6666'])
+        for y in range(50, height - 50, 5):
+            y_margin = y + random.randint(-1, 1)
+            draw.line([(margin_x, y_margin), (margin_x, y_margin + 2)], fill=margin_color, width=2)
         
-        # Add paper texture (very subtle)
-        for _ in range(50):
+        # Add holes for 3-ring binder
+        hole_positions = [150, 400, 650]
+        for hole_y in hole_positions:
+            if hole_y < height - 100:
+                draw.ellipse([25, hole_y, 35, hole_y + 10], fill='white', outline='gray', width=2)
+        
+        return image
+
+    def _create_grid_paper(self, width: int, height: int) -> Image.Image:
+        """Create grid paper background."""
+        image = Image.new('RGB', (width, height), color='white')
+        draw = ImageDraw.Draw(image)
+        
+        grid_size = 25
+        grid_color = random.choice(['lightgray', '#f0f0f0', '#e8e8e8'])
+        
+        # Draw vertical grid lines
+        for x in range(50, width - 50, grid_size):
+            x_offset = x + random.randint(-1, 1)
+            draw.line([(x_offset, 50), (x_offset, height - 50)], fill=grid_color, width=1)
+        
+        # Draw horizontal grid lines
+        for y in range(50, height - 50, grid_size):
+            y_offset = y + random.randint(-1, 1)
+            draw.line([(50, y_offset), (width - 50, y_offset)], fill=grid_color, width=1)
+        
+        # Draw thicker lines every 5 squares for major grid
+        major_grid_color = random.choice(['gray', '#d0d0d0'])
+        for x in range(50, width - 50, grid_size * 5):
+            draw.line([(x, 50), (x, height - 50)], fill=major_grid_color, width=2)
+        
+        for y in range(50, height - 50, grid_size * 5):
+            draw.line([(50, y), (width - 50, y)], fill=major_grid_color, width=2)
+        
+        return image
+
+    def _create_blank_paper(self, width: int, height: int) -> Image.Image:
+        """Create blank paper background."""
+        # Create slightly off-white background for realism
+        paper_colors = ['white', '#fefefe', '#fdfdfd', '#fcfcfc']
+        paper_color = random.choice(paper_colors)
+        
+        image = Image.new('RGB', (width, height), color=paper_color)
+        draw = ImageDraw.Draw(image)
+        
+        # Add very subtle paper texture
+        for _ in range(100):
             x = random.randint(0, width)
             y = random.randint(0, height)
-            noise_color = (250, 250, 250)
-            draw.point((x, y), fill=noise_color)
+            texture_color = random.choice(['#f8f8f8', '#f9f9f9', '#fafafa'])
+            draw.point((x, y), fill=texture_color)
+        
+        # Add margin line (very light)
+        margin_x = 80
+        margin_color = '#f0f0f0'
+        draw.line([(margin_x, 50), (margin_x, height - 50)], fill=margin_color, width=1)
+        
+        # Add holes for 3-ring binder (lighter than lined paper)
+        hole_positions = [150, 400, 650]
+        for hole_y in hole_positions:
+            if hole_y < height - 100:
+                draw.ellipse([25, hole_y, 35, hole_y + 10], fill='white', outline='lightgray', width=1)
         
         return image
 

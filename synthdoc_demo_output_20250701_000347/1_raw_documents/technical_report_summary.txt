@@ -1,5 +1,0 @@
-Document: technical_report
-Generated: 2025-07-01 00:03:58.859766
-Pages: 2
-Layout: SINGLE_COLUMN
-Metadata: {'workflow_type': 'raw_document_generation', 'total_cost': 0.00535, 'api_calls': 2, 'token_usage': {'prompt_tokens': 638, 'completion_tokens': 2356, 'total_tokens': 2994}, 'tokens_used': 2994, 'average_cost_per_call': 0.002675}

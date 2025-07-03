@@ -484,6 +484,15 @@ class PDFAugmentationConfig(BaseModel):
     pdf_files: List[Union[str, Path]] = Field(
         description="List of PDF files to augment"
     )
+    extraction_elements: Optional[List[str]] = Field(
+        default=None, description="Types of elements to extract (text_blocks, headers, images, tables, etc.)"
+    )
+    combination_strategy: str = Field(
+        default="random", description="Method for combining extracted elements"
+    )
+    num_generated_docs: int = Field(
+        default=5, ge=1, description="Number of new documents to generate"
+    )
     augmentations: Optional[List[AugmentationType]] = Field(
         default=None, description="Augmentations to apply"
     )
@@ -511,6 +520,10 @@ class VQAGenerationConfig(BaseModel):
     question_types: Optional[List[str]] = Field(
         default=None, description="Types of questions to generate"
     )
+    difficulty_levels: Optional[List[str]] = Field(
+        default=None,
+        description="Difficulty levels for generated questions (easy, medium, hard, etc.)",
+    )
     output_format: OutputFormat = Field(
         default=OutputFormat.HUGGINGFACE, description="Output format"
     )
@@ -526,6 +539,9 @@ class HandwritingGenerationConfig(BaseModel):
     handwriting_style: str = Field(
         default="default", description="Handwriting style to use"
     )
+    paper_template: str = Field(
+        default="lined", description="Paper template (lined, grid, blank)"
+    )
     language: Language = Field(default=Language.EN, description="Language for handwriting")
     num_samples: int = Field(
         default=1, ge=1, description="Number of handwriting samples to generate"
@@ -539,6 +555,74 @@ class HandwritingGenerationConfig(BaseModel):
 
 
 # Base Workflow Result
+class DocumentTranslationConfig(BaseModel):
+    """Configuration for document translation workflow."""
+
+    input_images: Optional[List[Union[str, Path]]] = Field(
+        default=None, description="List of image files or directories to translate"
+    )
+    input_dataset: Optional[List[Dict[str, Any]]] = Field(
+        default=None, description="Input dataset with images to translate"
+    )
+    target_languages: List[str] = Field(
+        default=["hi"], description="Target languages for translation (e.g., ['hi', 'zh', 'fr'])"
+    )
+    yolo_model_path: str = Field(
+        default="/SynthDoc/model-doclayout-yolo.pt",
+        description="Path to the YOLO layout detection model"
+    )
+    font_path: str = Field(
+        description="Path to directory containing language-specific fonts"
+    )
+    confidence_threshold: float = Field(
+        default=0.4, ge=0.0, le=1.0, description="Confidence threshold for layout detection"
+    )
+    image_size: int = Field(
+        default=1024, gt=0, description="Input image size for YOLO model"
+    )
+    preserve_layout: bool = Field(
+        default=True, description="Whether to preserve original document layout"
+    )
+    output_format: OutputFormat = Field(
+        default=OutputFormat.HUGGINGFACE, description="Output format"
+    )
+
+    @validator("target_languages")
+    def validate_languages(cls, v):
+        """Validate that at least one target language is specified."""
+        if not v:
+            raise ValueError("At least one target language must be specified")
+        return v
+
+    @validator("yolo_model_path")
+    def validate_model_path(cls, v):
+        """Validate that YOLO model path exists."""
+        if not Path(v).exists():
+            # For the default model path, provide a helpful warning instead of failing
+            if v == "/SynthDoc/model-doclayout-yolo.pt":
+                print(f"⚠️  Warning: Default YOLO model not found at {v}")
+                print("   Download the model from: https://huggingface.co/vikp/doclayout-yolo/tree/main")
+                print("   Or provide a custom yolo_model_path parameter")
+            else:
+                raise ValueError(f"YOLO model path does not exist: {v}")
+        return v
+
+    @validator("font_path")
+    def validate_font_path(cls, v):
+        """Validate that font path exists."""
+        if not Path(v).exists():
+            raise ValueError(f"Font path does not exist: {v}")
+        return v
+
+    @validator('input_dataset')
+    def validate_input_provided(cls, v, values):
+        """Validate that either input_images or input_dataset is provided."""
+        input_images = values.get('input_images')
+        if not input_images and not v:
+            raise ValueError("Either input_images or input_dataset must be provided")
+        return v
+
+
 class WorkflowResult(BaseModel):
     """Standard result format for all workflows."""
     

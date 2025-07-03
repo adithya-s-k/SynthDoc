@@ -334,11 +334,10 @@ class RawDocumentGenerator(BaseWorkflow):
         )
     
     def _load_dataset_from_files(self, pdf_name: str, num_pages: int) -> Dataset:
-        """Load dataset from saved files."""
+        """Load dataset from saved files with comprehensive README schema."""
         samples = []
         
         for page_num in range(1, num_pages + 1):
-    
             metadata_path = os.path.join(self.metadata_dir, f"{pdf_name}_page_{page_num}_metadata.json")
             if os.path.exists(metadata_path):
                 with open(metadata_path, 'r', encoding='utf-8') as f:
@@ -350,4 +349,62 @@ class RawDocumentGenerator(BaseWorkflow):
                 
                 samples.append(sample)
         
-        return Dataset.from_list(samples) if samples else Dataset.from_dict({})
+        if not samples:
+            return Dataset.from_dict({})
+            
+        # Extract data for comprehensive dataset creation
+        images = [s['image'] for s in samples]
+        image_paths = [s['image_path'] for s in samples]
+        pdf_names = [s['pdf_name'] for s in samples]
+        page_numbers = [s['page_number'] for s in samples]
+        markdown_content = [s['markdown'] for s in samples]
+        html_content = [s['html'] for s in samples]
+        
+        # Parse layout annotations from saved data
+        layout_annotations = []
+        line_annotations = []
+        embedded_images = []
+        equations = []
+        tables = []
+        content_lists = []
+        
+        for s in samples:
+            # Convert string representations back to lists/dicts
+            try:
+                layout_data = eval(s.get('layout', '[]')) if isinstance(s.get('layout'), str) else s.get('layout', [])
+                lines_data = eval(s.get('lines', '[]')) if isinstance(s.get('lines'), str) else s.get('lines', [])
+                images_data = eval(s.get('images', '[]')) if isinstance(s.get('images'), str) else s.get('images', [])
+                equations_data = eval(s.get('equations', '[]')) if isinstance(s.get('equations'), str) else s.get('equations', [])
+                tables_data = eval(s.get('tables', '[]')) if isinstance(s.get('tables'), str) else s.get('tables', [])
+                content_data = eval(s.get('content_list', '[]')) if isinstance(s.get('content_list'), str) else s.get('content_list', [])
+            except:
+                layout_data = []
+                lines_data = []
+                images_data = []
+                equations_data = []
+                tables_data = []
+                content_data = []
+                
+            layout_annotations.append(layout_data)
+            line_annotations.append(lines_data)
+            embedded_images.append(images_data)
+            equations.append(equations_data)
+            tables.append(tables_data)
+            content_lists.append(content_data)
+        
+        # Create comprehensive dataset using the comprehensive method from base class
+        return self._create_comprehensive_hf_dataset(
+            images=images,
+            image_paths=image_paths,
+            pdf_names=pdf_names,
+            page_numbers=page_numbers,
+            markdown_content=markdown_content,
+            html_content=html_content,
+            layout_annotations=layout_annotations,
+            line_annotations=line_annotations,
+            embedded_images=embedded_images,
+            equations=equations,
+            tables=tables,
+            content_lists=content_lists,
+            additional_metadata={"workflow": "raw_document_generation"}
+        )

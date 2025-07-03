@@ -178,6 +178,7 @@ def create_handwriting_samples(
     text_content: str = None,
     language: Language = Language.EN,
     handwriting_style: str = "default",
+    paper_template: str = "lined",
     num_samples: int = 1,
     save_dir: str = "handwriting_output"
 ) -> WorkflowResult:
@@ -188,6 +189,7 @@ def create_handwriting_samples(
         text_content: Text content to render as handwriting
         language: Target language
         handwriting_style: Style of handwriting ("default", "cursive", "print")
+        paper_template: Paper background style ("lined", "grid", "blank")
         num_samples: Number of samples to generate
         save_dir: Directory to save handwriting samples
         
@@ -202,6 +204,7 @@ def create_handwriting_samples(
         text_content=text_content,
         language=language,
         handwriting_style=handwriting_style,
+        paper_template=paper_template,
         num_samples=num_samples
     )
     

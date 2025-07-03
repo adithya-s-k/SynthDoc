@@ -936,8 +936,8 @@ Return only the question, no explanations."""
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=100,
-                temperature=0.7,
+                max_tokens=1000,
+                temperature=0.9,
             )
             
             return response.choices[0].message.content.strip()
@@ -1007,7 +1007,7 @@ Generate {num_negatives} plausible but incorrect answers. Return one answer per 
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=200,
+                max_tokens=1000,
                 temperature=0.8,
             )
             

@@ -4,6 +4,7 @@ from .vqa_generator import VQAGenerator
 from .layout_augmenter import LayoutAugmenter
 from .handwriting_generator import HandwritingGenerator
 from .pdf_augmenter import PDFAugmenter
+from .document_translator import DocumentTranslator
 
 __all__ = [
     "BaseWorkflow",
@@ -12,4 +13,5 @@ __all__ = [
     "LayoutAugmenter",
     "HandwritingGenerator",
     "PDFAugmenter",
+    "DocumentTranslator",
 ] 

@@ -96,7 +96,7 @@ The library supports 22 languages across different script systems:
 
 ### 4. Handwriting Synthesis
 - Multiple writing styles
-- Paper templates
+- Paper templates (lined, grid, blank)
 - Natural variations
 
 ## Configuration
@@ -138,6 +138,3 @@ SynthDoc generates HuggingFace-compatible datasets with:
 ## Examples
 
 See the `examples/` directory for complete examples:
-- `basic_usage.py` - Basic functionality demo
-- `multilingual_demo.py` - Multilingual document generation
-- `advanced_augmentation.py` - Complex augmentation pipelines

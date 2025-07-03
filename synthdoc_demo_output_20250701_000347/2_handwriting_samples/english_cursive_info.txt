@@ -1,6 +1,0 @@
-Handwriting Sample: english_cursive
-Style: cursive
-Language: en
-Samples: 2
-Generated: 2025-07-01 00:04:06.374441
-Files: 2

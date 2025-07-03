@@ -4,12 +4,13 @@ A comprehensive library for generating synthetic documents designed for training
 
 ## Features
 
-✅ **Multi-language Support**: Generate documents in various languages with appropriate fonts and scripts
-✅ **Flexible Document Generation**: Create documents from scratch using LLMs or augment existing documents
-✅ **Layout Analysis**: Extract and manipulate document layouts for training layout detection models
-✅ **VQA Dataset Creation**: Generate visual question-answering datasets with hard negatives for retrieval training
-✅ **Handwriting Support**: Create handwritten documents using custom fonts and templates
-✅ **HuggingFace Integration**: Output datasets in HuggingFace format for seamless integration with ML pipelines
+✅ **Multi-language Support**: Generate documents in various languages with appropriate fonts and scripts (Fully Implemented)
+✅ **Flexible Document Generation**: Create documents from scratch using LLMs or augment existing documents (Fully Implemented)
+✅ **Layout Analysis**: Extract and manipulate document layouts for training layout detection models (Fully Implemented)
+✅ **VQA Dataset Creation**: Generate visual question-answering datasets with hard negatives for retrieval training (Fully Implemented)
+✅ **Handwriting Support**: Create handwritten documents using custom fonts and templates with paper styles (Fully Implemented)
+✅ **PDF Document Recombination**: Extract and recombine elements from existing PDF documents (Fully Implemented)
+✅ **HuggingFace Integration**: Output datasets in HuggingFace format for seamless integration with ML pipelines (Fully Implemented)
 
 ## Workflows
 
@@ -140,8 +141,13 @@ Generate documents with handwritten appearance using custom handwriting fonts an
 **Process**:
 1. Apply handwriting fonts to generated or existing content
 2. Simulate natural handwriting variations (spacing, alignment, pressure)
-3. Add realistic paper backgrounds and artifacts
+3. Add realistic paper backgrounds and artifacts (lined paper, grid paper, or blank)
 4. Include common handwriting imperfections for robustness
+
+**Paper Template Options**:
+- `lined`: Traditional lined notebook paper with horizontal lines and margin
+- `grid`: Graph paper with grid lines for technical writing
+- `blank`: Clean paper with subtle texture and minimal guidelines
 
 **Output**: HuggingFace dataset optimized for handwritten document understanding tasks
 
@@ -214,6 +220,25 @@ vqa_dataset = synth.generate_vqa(
     source_documents=documents,
     question_types=["factual", "reasoning", "comparative"],
     difficulty_levels=["easy", "medium", "hard"]
+)
+
+# Generate handwritten documents with different paper styles
+handwriting_lined = synth.generate_handwriting(
+    content="Practice handwriting on lined paper",
+    writing_style="cursive",
+    paper_template="lined"
+)
+
+handwriting_grid = synth.generate_handwriting(
+    content="Technical notes on grid paper",
+    writing_style="print", 
+    paper_template="grid"
+)
+
+handwriting_blank = synth.generate_handwriting(
+    content="Creative writing on blank paper",
+    writing_style="mixed",
+    paper_template="blank"
 )
 ```
 

@@ -1,8 +1,0 @@
-VQA Dataset Results
-Generated: 2025-07-01 00:04:16.298742
-Source documents: 3
-Questions per document: 4
-Question types: ['factual', 'reasoning', 'comparative']
-Include hard negatives: True
-Total questions: 12
-Processing cost: N/A
