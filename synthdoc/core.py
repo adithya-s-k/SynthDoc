@@ -494,7 +494,7 @@ class SynthDoc:
             input_images: Image files or directories to translate, or single image path
             input_dataset: Input dataset with images to translate
             target_languages: Target languages for translation (e.g., ['hi', 'zh', 'fr'])
-            yolo_model_path: Path to YOLO layout detection model (default: '/SynthDoc/model-doclayout-yolo.pt')
+            yolo_model_path: Path to YOLO layout detection model (default: './model-doclayout-yolo.pt')
             font_path: Path to directory with language-specific fonts
             confidence_threshold: Confidence threshold for layout detection (0.0-1.0)
             image_size: Input image size for YOLO model
@@ -531,8 +531,8 @@ class SynthDoc:
 
         # Set default paths if not provided
         if yolo_model_path is None:
-            # Use the default YOLO model path
-            yolo_model_path = "/SynthDoc/model-doclayout-yolo.pt"
+            # Use the default YOLO model path (relative to current directory)
+            yolo_model_path = "./model-doclayout-yolo.pt"
             
         if font_path is None:
             # Use SynthDoc's built-in font path

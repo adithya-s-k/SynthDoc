@@ -3,6 +3,20 @@ Document Translation Workflow for SynthDoc
 
 This workflow uses YOLO layout detection, OCR, and translation to convert documents
 to different languages while preserving the original layout and formatting.
+
+Supports input formats:
+- Single image files (PNG, JPG, JPEG, TIFF, BMP)
+- Single PDF files 
+- Folders containing images and/or PDFs
+- Lists of file paths
+
+Pipeline:
+1. Convert PDFs to images (if needed)
+2. YOLO layout detection to identify text regions
+3. OCR text extraction from detected regions
+4. Translation to target languages
+5. Font rendering with appropriate fonts for target languages
+6. Image reconstruction with translated text while preserving layout
 """
 
 import os
@@ -12,6 +26,7 @@ import time
 import base64
 import random
 import glob
+import shutil
 from pathlib import Path
 from typing import List, Dict, Any, Union, Optional
 import logging
@@ -44,13 +59,316 @@ except ImportError:
     TRANSLATOR_AVAILABLE = False
     print("⚠️  deep_translator not available - translation will be disabled")
 
+# Optional PDF processing
+try:
+    import fitz  # PyMuPDF
+    PDF_AVAILABLE = True
+except ImportError:
+    try:
+        import pdf2image
+        PDF_AVAILABLE = True
+    except ImportError:
+        PDF_AVAILABLE = False
+        print("⚠️  PDF processing not available - install PyMuPDF or pdf2image")
+
 from ..base import BaseWorkflow
 from ...models import DocumentTranslationConfig, WorkflowResult
 
 
+def pdf_to_images(pdf_path: str, output_dir: str = None) -> List[str]:
+    """Convert PDF to images. Returns list of image paths."""
+    if not PDF_AVAILABLE:
+        raise ValueError("PDF processing not available. Install PyMuPDF or pdf2image")
+    
+    pdf_path = Path(pdf_path)
+    if output_dir is None:
+        output_dir = pdf_path.parent / "temp_images"
+    
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    image_paths = []
+    
+    try:
+        # Try PyMuPDF first (faster)
+        import fitz
+        doc = fitz.open(str(pdf_path))
+        for page_num in range(doc.page_count):
+            page = doc[page_num]
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom for better quality
+            img_path = output_dir / f"{pdf_path.stem}_page_{page_num + 1}.png"
+            pix.save(str(img_path))
+            image_paths.append(str(img_path))
+        doc.close()
+        
+    except ImportError:
+        # Fallback to pdf2image
+        from pdf2image import convert_from_path
+        images = convert_from_path(str(pdf_path), dpi=200)
+        for i, image in enumerate(images):
+            img_path = output_dir / f"{pdf_path.stem}_page_{i + 1}.png"
+            image.save(str(img_path))
+            image_paths.append(str(img_path))
+    
+    return image_paths
+
+
+def collect_input_files(input_paths: List[Union[str, Path]]) -> Dict[str, List[str]]:
+    """
+    Collect and categorize input files from various sources.
+    Returns dict with 'images' and 'pdfs' lists.
+    """
+    images = []
+    pdfs = []
+    
+    image_extensions = {'.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.gif'}
+    pdf_extensions = {'.pdf'}
+    
+    for input_path in input_paths:
+        path = Path(input_path)
+        
+        if path.is_file():
+            # Single file
+            if path.suffix.lower() in image_extensions:
+                images.append(str(path))
+            elif path.suffix.lower() in pdf_extensions:
+                pdfs.append(str(path))
+                
+        elif path.is_dir():
+            # Directory - recursively find files
+            for file_path in path.rglob('*'):
+                if file_path.is_file():
+                    if file_path.suffix.lower() in image_extensions:
+                        images.append(str(file_path))
+                    elif file_path.suffix.lower() in pdf_extensions:
+                        pdfs.append(str(file_path))
+    
+    return {'images': images, 'pdfs': pdfs}
+
+
+def get_background_color(image_region):
+    """Get most frequent color from the image region"""
+    pixels = image_region.reshape(-1, 3)
+    unique_colors, counts = np.unique(pixels, axis=0, return_counts=True)
+    most_frequent_color = unique_colors[counts.argmax()]
+    return tuple(map(int, most_frequent_color))
+
+
+def get_text_color(bg_color):
+    """Determine text color using weighted luminance calculation"""
+    # Weights based on human perception of colors
+    weights = np.array([0.299, 0.587, 0.114])
+    luminance = np.sum(np.array(bg_color) * weights)
+    return (0, 0, 0) if luminance > 127 else (255, 255, 255)
+
+
+def get_random_font(font_path: str, lang_code: str) -> Optional[str]:
+    """
+    Select a random font file from the language-specific font directory.
+    Args:
+        font_path: Parent directory containing language-specific font subdirectories
+        lang_code: Language code (e.g. 'hi', 'zh', 'ar')
+    Returns:
+        Path to a random font file or None if not found
+    """
+    lang_font_dir = os.path.join(font_path, lang_code)
+    
+    if not os.path.exists(lang_font_dir):
+        return None
+        
+    font_extensions = (".ttf", ".otf", ".TTF", ".OTF")
+    font_files = []
+    for ext in font_extensions:
+        font_files.extend(glob.glob(os.path.join(lang_font_dir, f"*{ext}")))
+    
+    if not font_files:
+        return None
+        
+    return random.choice(font_files)
+
+
+def chunk_text_for_translation(text: str, max_length: int = 4500) -> List[str]:
+    """
+    Split text into chunks suitable for translation APIs with character limits.
+    
+    Args:
+        text: Input text to chunk
+        max_length: Maximum length per chunk (default 4500 to stay under 5000 limit)
+    
+    Returns:
+        List of text chunks
+    """
+    if len(text) <= max_length:
+        return [text]
+    
+    chunks = []
+    
+    # Try to split by sentences first
+    sentences = text.split('. ')
+    current_chunk = ""
+    
+    for sentence in sentences:
+        # If adding this sentence would exceed the limit
+        if len(current_chunk) + len(sentence) + 2 > max_length:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = sentence + '. '
+            else:
+                # Single sentence is too long, split by words
+                words = sentence.split()
+                word_chunk = ""
+                for word in words:
+                    if len(word_chunk) + len(word) + 1 > max_length:
+                        if word_chunk:
+                            chunks.append(word_chunk.strip())
+                            word_chunk = word + ' '
+                        else:
+                            # Single word is too long, force split
+                            chunks.append(word[:max_length])
+                            word_chunk = word[max_length:] + ' ' if len(word) > max_length else ""
+                    else:
+                        word_chunk += word + ' '
+                if word_chunk:
+                    current_chunk = word_chunk + '. '
+        else:
+            current_chunk += sentence + '. '
+    
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+    
+    return chunks
+
+
+def translate_text_chunks(translator, text: str) -> str:
+    """
+    Translate text by chunking it if necessary to handle API limits.
+    
+    Args:
+        translator: GoogleTranslator instance
+        text: Text to translate
+    
+    Returns:
+        Translated text
+    """
+    chunks = chunk_text_for_translation(text)
+    
+    if len(chunks) == 1:
+        # Single chunk, translate directly
+        return translator.translate(text)
+    
+    # Multiple chunks, translate each and combine
+    translated_chunks = []
+    for chunk in chunks:
+        try:
+            translated_chunk = translator.translate(chunk)
+            translated_chunks.append(translated_chunk)
+        except Exception as e:
+            print(f"Warning: Failed to translate chunk: {str(e)[:100]}...")
+            # If translation fails, keep original text for this chunk
+            translated_chunks.append(chunk)
+    
+    return ' '.join(translated_chunks)
+
+
+def wrap_text_for_box(text, box_width, font_path, font_size):
+    """
+    Wrap text for a box based on the font size and box width.
+    Returns text with newline characters.
+    """
+    try:
+        font = ImageFont.truetype(font_path, font_size, layout_engine="raqm")
+    except Exception:
+        font = ImageFont.load_default()
+        
+    words = text.split()
+    lines = []
+    current_line = ""
+
+    for word in words:
+        test_line = f"{current_line} {word}".strip()
+        try:
+            line_bbox = font.getbbox(test_line)
+            line_width = line_bbox[2] - line_bbox[0]
+        except Exception:
+            line_width = len(test_line) * font_size * 0.6  # Rough estimate
+            
+        if line_width <= box_width * 0.95:  # 95% of box width
+            current_line = test_line
+        else:
+            if current_line:
+                lines.append(current_line)
+            current_line = word
+
+    if current_line:
+        lines.append(current_line)
+
+    return "\n".join(lines)
+
+
+def fit_text_in_box(text, box_width, box_height, font_path, max_font_size=100, min_font_size=10):
+    """
+    Find the optimal font size to fit text in a given box using binary search.
+    Returns the optimal font and the list of text lines.
+    """
+    if not font_path or not os.path.exists(font_path):
+        try:
+            font = ImageFont.load_default()
+            lines = text.split('\n') if '\n' in text else [text]
+            return font, lines
+        except Exception:
+            return None, [text]
+    
+    lower = min_font_size
+    upper = max_font_size
+    optimal_font = None
+    optimal_lines = []
+
+    while lower <= upper:
+        mid = (lower + upper) // 2
+        wrapped_text = wrap_text_for_box(text, box_width, font_path, mid)
+        lines = wrapped_text.split("\n")
+        
+        try:
+            font = ImageFont.truetype(font_path, mid, layout_engine="raqm")
+        except Exception:
+            font = ImageFont.load_default()
+
+        line_widths = []
+        total_height = 0
+        for line in lines:
+            try:
+                line_bbox = font.getbbox(line)
+                line_width = line_bbox[2] - line_bbox[0]
+                line_height = line_bbox[3] - line_bbox[1]
+            except Exception:
+                line_width = len(line) * mid * 0.6
+                line_height = mid
+                
+            line_widths.append(line_width)
+            total_height += line_height * 1.2  # Including line spacing
+
+        max_line_width = max(line_widths) if line_widths else 0
+
+        if max_line_width <= box_width * 0.95 and total_height <= box_height * 0.95:
+            optimal_font = font
+            optimal_lines = lines
+            lower = mid + 1
+        else:
+            upper = mid - 1
+
+    if not optimal_font:
+        try:
+            optimal_font = ImageFont.truetype(font_path, min_font_size, layout_engine="raqm")
+        except Exception:
+            optimal_font = ImageFont.load_default()
+        optimal_lines = wrap_text_for_box(text, box_width, font_path, min_font_size).split("\n")
+
+    return optimal_font, optimal_lines
+
+
 class ImageTranslator:
     """
-    Enhanced ImageTranslator class integrated with SynthDoc.
+    Document translation pipeline using YOLO layout detection, OCR, and translation.
     """
     
     def __init__(
@@ -82,10 +400,10 @@ class ImageTranslator:
             self.translators = {}
             self.logger.warning("Translation not available - will preserve original text")
         
-        # Layout class mapping
+        # Layout class mapping for YOLO detection
         self.class_mapping = {
             "plain text": "text",
-            "title": "title", 
+            "title": "title",
             "figure": "image",
             "isolate_formula": "formula",
             "figure_caption": "caption",
@@ -93,146 +411,20 @@ class ImageTranslator:
         }
         self.translatable_classes = ["plain text", "title", "figure_caption"]
     
-    def get_background_color(self, image_region):
-        """Get most frequent color from the image region"""
-        pixels = image_region.reshape(-1, 3)
-        unique_colors, counts = np.unique(pixels, axis=0, return_counts=True)
-        most_frequent_color = unique_colors[counts.argmax()]
-        return tuple(map(int, most_frequent_color))
-    
-    def get_text_color(self, bg_color):
-        """Determine text color using weighted luminance calculation"""
-        weights = np.array([0.299, 0.587, 0.114])
-        luminance = np.sum(np.array(bg_color) * weights)
-        return (0, 0, 0) if luminance > 127 else (255, 255, 255)
-    
-    def get_random_font(self, lang_code: str) -> str:
-        """Select a random font file from the language-specific font directory."""
-        lang_font_dir = os.path.join(self.font_path, lang_code)
-        
-        if not os.path.exists(lang_font_dir):
-            self.logger.warning(f"Font directory not found: {lang_font_dir}")
-            # Fallback to default font
-            return None
-            
-        font_extensions = (".ttf", ".otf", ".TTF", ".OTF")
-        font_files = []
-        for ext in font_extensions:
-            font_files.extend(glob.glob(os.path.join(lang_font_dir, f"*{ext}")))
-            
-        if not font_files:
-            self.logger.warning(f"No font files found in directory: {lang_font_dir}")
-            return None
-            
-        return random.choice(font_files)
-    
-    def wrap_text_for_box(self, text, box_width, font_path, font_size):
-        """Wrap text for a box based on the font size and box width."""
-        if not font_path:
-            return text  # Return original if no font available
-            
-        try:
-            font = ImageFont.truetype(font_path, font_size, layout_engine="raqm")
-        except Exception:
-            # Fallback to default font
-            font = ImageFont.load_default()
-            
-        words = text.split()
-        lines = []
-        current_line = ""
-        
-        for word in words:
-            test_line = f"{current_line} {word}".strip()
-            try:
-                line_bbox = font.getbbox(test_line)
-                line_width = line_bbox[2] - line_bbox[0]
-            except Exception:
-                line_width = len(test_line) * font_size * 0.6  # Rough estimate
-                
-            if line_width <= box_width * 0.95:
-                current_line = test_line
-            else:
-                if current_line:
-                    lines.append(current_line)
-                current_line = word
-        
-        if current_line:
-            lines.append(current_line)
-        
-        return "\n".join(lines)
-    
-    def fit_text_in_box(self, text, box_width, box_height, font_path, max_font_size=100, min_font_size=10):
-        """Find the optimal font size to fit text in a given box using binary search."""
-        if not font_path:
-            # Fallback with default font
-            try:
-                font = ImageFont.load_default()
-                lines = text.split('\n') if '\n' in text else [text]
-                return font, lines
-            except Exception:
-                return None, [text]
-        
-        lower = min_font_size
-        upper = max_font_size
-        optimal_font = None
-        optimal_lines = []
-        
-        while lower <= upper:
-            mid = (lower + upper) // 2
-            wrapped_text = self.wrap_text_for_box(text, box_width, font_path, mid)
-            lines = wrapped_text.split("\n")
-            
-            try:
-                font = ImageFont.truetype(font_path, mid, layout_engine="raqm")
-            except Exception:
-                font = ImageFont.load_default()
-            
-            line_widths = []
-            total_height = 0
-            for line in lines:
-                try:
-                    line_bbox = font.getbbox(line)
-                    line_width = line_bbox[2] - line_bbox[0]
-                    line_height = line_bbox[3] - line_bbox[1]
-                except Exception:
-                    line_width = len(line) * mid * 0.6
-                    line_height = mid
-                    
-                line_widths.append(line_width)
-                total_height += line_height * 1.2
-            
-            max_line_width = max(line_widths) if line_widths else 0
-            
-            if max_line_width <= box_width * 0.95 and total_height <= box_height * 0.95:
-                optimal_font = font
-                optimal_lines = lines
-                lower = mid + 1
-            else:
-                upper = mid - 1
-        
-        if not optimal_font:
-            try:
-                optimal_font = ImageFont.truetype(font_path, min_font_size, layout_engine="raqm")
-            except Exception:
-                optimal_font = ImageFont.load_default()
-            optimal_lines = self.wrap_text_for_box(text, box_width, font_path, min_font_size).split("\n")
-        
-        return optimal_font, optimal_lines
-    
     def detect_and_ocr_image(self, cv2_image, results):
-        """Process layout detection and OCR for an image"""
+        """Process layout detection and OCR for an image once"""
         regions = []
-        
+
         for i, box in enumerate(results.boxes):
             bbox = box.xyxy[0].cpu().numpy()
             xmin, ymin, xmax, ymax = map(int, bbox)
-            
+
             class_id = int(box.cls[0])
             class_name = results.names[class_id]
-            
+
             if class_name not in self.class_mapping:
                 continue
-            
+
             mapped_class_name = self.class_mapping[class_name]
             region_data = {
                 "region_id": i + 1,
@@ -244,100 +436,93 @@ class ImageTranslator:
                     "ymax": int(ymax),
                 },
             }
-            
-            if class_name in self.translatable_classes and TESSERACT_AVAILABLE:
+
+            if class_name in self.translatable_classes:
                 roi = cv2_image[ymin:ymax, xmin:xmax]
                 if roi.size == 0:
                     continue
-                
-                try:
-                    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                    text = pytesseract.image_to_string(binary, config="--oem 3 --psm 6").strip()
-                    
-                    if text:
-                        region_data["english_text"] = text
-                        regions.append(region_data)
-                except Exception as e:
-                    self.logger.warning(f"OCR failed for region {i}: {e}")
-                    continue
-            else:
-                # Include non-text regions in output
-                regions.append(region_data)
-        
+
+                gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+                _, binary = cv2.threshold(
+                    gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+                )
+                text = pytesseract.image_to_string(
+                    binary, config="--oem 3 --psm 6"
+                ).strip()
+
+                if text:
+                    region_data["english_text"] = text
+                    regions.append(region_data)
+
         return regions
     
-    def process_single_image(self, idx: int, input_img: Union[Image.Image, np.ndarray]) -> Dict[str, Any]:
+    def process_single_image(self, idx, input_img):
         """Process a single image with optimized language handling"""
-        image = input_img if isinstance(input_img, Image.Image) else Image.fromarray(input_img)
+        image = (
+            input_img
+            if isinstance(input_img, Image.Image)
+            else Image.fromarray(input_img)
+        )
         cv2_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-        
-        if not YOLO_AVAILABLE:
-            self.logger.error("YOLO not available - cannot perform layout detection")
-            return {"error": "YOLO model not available"}
-        
-        try:
-            model = YOLOv10(self.model_path)
-            det_res = model.predict(cv2_image, imgsz=self.imgsz, conf=self.conf, device="cpu")
-            regions = self.detect_and_ocr_image(cv2_image, det_res[0])
-        except Exception as e:
-            self.logger.error(f"Layout detection failed: {e}")
-            return {"error": f"Layout detection failed: {e}"}
-        
-        results = {}
-        
+
+        model = YOLOv10(self.model_path)
+        det_res = model.predict(
+            cv2_image, imgsz=self.imgsz, conf=self.conf, device="cpu"
+        )
+        regions = self.detect_and_ocr_image(cv2_image, det_res[0])
+
         for lang in self.langs:
             try:
-                selected_font_path = self.get_random_font(lang)
+                selected_font_path = get_random_font(self.font_path, lang)
                 pil_image = Image.fromarray(cv2.cvtColor(cv2_image, cv2.COLOR_BGR2RGB))
                 draw = ImageDraw.Draw(pil_image)
-                
+
                 translation_data = {
                     "image_id": f"image_{idx}",
-                    "target_language": lang,
                     "font_used": os.path.basename(selected_font_path) if selected_font_path else "default",
                     "regions": [],
                 }
-                
-                bg_color = self.get_background_color(cv2.cvtColor(cv2_image, cv2.COLOR_BGR2RGB))
-                text_color = self.get_text_color(bg_color)
-                
+
+                bg_color = get_background_color(
+                    cv2.cvtColor(cv2_image, cv2.COLOR_BGR2RGB)
+                )
+                text_color = get_text_color(bg_color)
+
                 for region in regions:
                     bbox = region["bbox"]
                     translated_region = region.copy()
-                    
-                    if (region["layout_type"] in ["text", "title", "caption"] and 
-                        "english_text" in region and 
-                        TRANSLATOR_AVAILABLE and 
-                        lang in self.translators):
-                        
+
+                    if region["layout_type"] in ["text", "title", "caption"]:
                         try:
-                            translated_text = self.translators[lang].translate(region["english_text"])
+                            # Use chunking to handle long text that exceeds API limits
+                            translated_text = translate_text_chunks(
+                                self.translators[lang], 
+                                region["english_text"]
+                            )
                             translated_region["translated_text"] = translated_text
-                            
-                            font, text_lines = self.fit_text_in_box(
+
+                            font, text_lines = fit_text_in_box(
                                 translated_text,
                                 bbox["xmax"] - bbox["xmin"],
                                 bbox["ymax"] - bbox["ymin"],
                                 selected_font_path,
                             )
-                            
+
                             if font and text_lines:
-                                # Clear the original text area
                                 draw.rectangle(
-                                    [bbox["xmin"], bbox["ymin"], bbox["xmax"], bbox["ymax"]],
+                                    [
+                                        bbox["xmin"],
+                                        bbox["ymin"],
+                                        bbox["xmax"],
+                                        bbox["ymax"],
+                                    ],
                                     fill=bg_color,
                                 )
-                                
-                                # Draw translated text
                                 current_y = bbox["ymin"]
+
                                 for line in text_lines:
-                                    try:
-                                        line_bbox = font.getbbox(line)
-                                        line_height = line_bbox[3] - line_bbox[1]
-                                    except Exception:
-                                        line_height = font.size
-                                        
+                                    line_bbox = font.getbbox(line)
+                                    line_height = line_bbox[3] - line_bbox[1]
                                     draw.text(
                                         (bbox["xmin"], current_y),
                                         line,
@@ -345,26 +530,28 @@ class ImageTranslator:
                                         fill=text_color,
                                     )
                                     current_y += line_height * 1.2
-                                    
+
                         except Exception as e:
-                            self.logger.warning(f"Translation error for region {region['region_id']}: {e}")
-                            # Keep original text if translation fails
-                            translated_region["translated_text"] = region.get("english_text", "")
-                    
+                            self.logger.warning(
+                                f"Translation error in image {idx}, region {region['region_id']}: {e}"
+                            )
+                            continue
+
                     translation_data["regions"].append(translated_region)
-                
-                # Convert image to base64
-                _, buffer = cv2.imencode(".jpg", cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR))
+
+                _, buffer = cv2.imencode(
+                    ".jpg", cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+                )
                 img_base64 = base64.b64encode(buffer).decode("utf-8")
+
                 translation_data["translated_image"] = img_base64
-                
-                results[lang] = translation_data
-                
+                self.output[lang] = translation_data
+
             except Exception as e:
                 self.logger.error(f"Error processing image {idx} for language {lang}: {e}")
-                results[lang] = {"error": str(e)}
-        
-        return results
+                continue
+
+        return json.dumps(self.output, ensure_ascii=False)
 
 
 class DocumentTranslator(BaseWorkflow):
@@ -376,15 +563,30 @@ class DocumentTranslator(BaseWorkflow):
     - OCR for text extraction  
     - Translation APIs for text conversion
     - Smart font rendering for target languages
+    
+    Supports:
+    - Single images, PDFs, or folders containing mixed content
+    - Multiple target languages simultaneously
+    - Automatic font selection for target languages
+    - Layout preservation through bounding box detection
     """
     
     def __init__(self, save_dir: str = "document_translation_output"):
-        super().__init__(save_dir)
+        super().__init__()
+        self.save_dir = save_dir
         self.workflow_name = "document_translation"
+        self.logger = logging.getLogger(__name__)
+        os.makedirs(save_dir, exist_ok=True)
     
     def process(self, config: DocumentTranslationConfig) -> WorkflowResult:
         """
         Process document translation according to configuration.
+        
+        Pipeline:
+        1. Collect input files (images/PDFs from files or folders)
+        2. Convert PDFs to images
+        3. Run translation pipeline on all images
+        4. Save translated images and create dataset
         
         Args:
             config: DocumentTranslationConfig with translation parameters
@@ -398,19 +600,47 @@ class DocumentTranslator(BaseWorkflow):
         
         # Validate dependencies
         if not YOLO_AVAILABLE:
-            self.logger.error("YOLO model not available - cannot perform document translation")
-            return WorkflowResult(
-                dataset=Dataset.from_dict({}),
-                metadata={
-                    "workflow_type": "document_translation",
-                    "status": "failed",
-                    "error": "YOLO dependency not available",
-                    "processing_time": time.time() - start_time
-                },
-                num_samples=0
-            )
+            self.logger.error("YOLO model not available")
+            return self._create_fallback_result("YOLO dependency not available", start_time)
         
-        # Initialize translator
+        if not TESSERACT_AVAILABLE:
+            self.logger.error("Tesseract not available")
+            return self._create_fallback_result("Tesseract dependency not available", start_time)
+        
+        if not TRANSLATOR_AVAILABLE:
+            self.logger.error("Deep-translator not available")
+            return self._create_fallback_result("Translation dependency not available", start_time)
+        
+        # Step 1: Collect input files
+        input_paths = []
+        if config.input_images:
+            input_paths.extend(config.input_images)
+        
+        if not input_paths:
+            self.logger.error("No input images provided")
+            return self._create_fallback_result("No input images provided", start_time)
+        
+        files = collect_input_files(input_paths)
+        self.logger.info(f"📁 Found {len(files['images'])} images and {len(files['pdfs'])} PDFs")
+        
+        # Step 2: Convert PDFs to images
+        all_image_paths = files['images'].copy()
+        pdf_temp_dirs = []
+        
+        for pdf_path in files['pdfs']:
+            try:
+                self.logger.info(f"📄 Converting PDF: {Path(pdf_path).name}")
+                temp_dir = Path(self.save_dir) / "temp_pdf_images" / Path(pdf_path).stem
+                pdf_images = pdf_to_images(pdf_path, str(temp_dir))
+                all_image_paths.extend(pdf_images)
+                pdf_temp_dirs.append(temp_dir)
+                self.logger.info(f"   ✅ Converted to {len(pdf_images)} images")
+            except Exception as e:
+                self.logger.error(f"   ❌ Failed to convert PDF {pdf_path}: {e}")
+        
+        self.logger.info(f"📄 Total images to process: {len(all_image_paths)}")
+        
+        # Step 3: Initialize translator
         translator = ImageTranslator(
             model_path=config.yolo_model_path,
             font_path=config.font_path,
@@ -420,202 +650,251 @@ class DocumentTranslator(BaseWorkflow):
             logger=self.logger
         )
         
-        # Process input images
-        samples = []
-        image_paths = self._get_image_paths(config)
+        # Step 4: Process all images
+        all_results = []
         
-        self.logger.info(f"📄 Processing {len(image_paths)} images...")
-        
-        for idx, image_path in enumerate(image_paths):
+        for idx, image_path in enumerate(all_image_paths):
             try:
-                self.logger.info(f"Processing image {idx + 1}/{len(image_paths)}: {Path(image_path).name}")
+                self.logger.info(f"🔄 Processing image {idx + 1}/{len(all_image_paths)}: {Path(image_path).name}")
                 
-                # Load image
+                # Load and process image
                 image = Image.open(image_path)
+                json_output = translator.process_single_image(idx, image)
+                translations = json.loads(json_output)
                 
-                # Process translation
-                translation_results = translator.process_single_image(idx, image)
-                
-                # Create samples for each target language
-                for lang, result_data in translation_results.items():
-                    if "error" in result_data:
-                        self.logger.warning(f"Translation failed for {lang}: {result_data['error']}")
+                # Save results for each language
+                for lang, data in translations.items():
+                    if "translated_image" not in data:
                         continue
+                        
+                    # Decode and save translated image
+                    img_base64 = data["translated_image"]
+                    img_bytes = base64.b64decode(img_base64)
+                    np_arr = np.frombuffer(img_bytes, np.uint8)
+                    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
                     
-                    # Save translated image
-                    if "translated_image" in result_data:
-                        img_bytes = base64.b64decode(result_data["translated_image"])
-                        np_arr = np.frombuffer(img_bytes, np.uint8)
-                        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-                        
-                        output_filename = f"translated_{lang}_{idx}_{Path(image_path).stem}.jpg"
-                        output_path = os.path.join(self.save_dir, output_filename)
-                        cv2.imwrite(output_path, img)
-                        
-                        # Create sample entry
-                        sample = {
-                            "id": f"translation_{lang}_{idx}",
-                            "original_image_path": str(image_path),
-                            "translated_image_path": output_path,
-                            "source_language": "auto-detected",
-                            "target_language": lang,
-                            "font_used": result_data.get("font_used", "default"),
-                            "translation_regions": json.dumps(result_data.get("regions", [])),
-                            "num_regions": len(result_data.get("regions", [])),
-                            "processing_status": "success"
-                        }
-                        
-                        # Add comprehensive dataset fields
-                        translated_img = Image.open(output_path)
-                        sample.update({
-                            "image": translated_img,
-                            "image_width": translated_img.width,
-                            "image_height": translated_img.height,
-                            "image_path": output_path,
-                            "pdf_name": f"translated_doc_{lang}_{idx}",
-                            "page_number": 0,
-                            "markdown": self._extract_markdown_from_regions(result_data.get("regions", [])),
-                            "html": self._extract_html_from_regions(result_data.get("regions", [])),
-                        })
-                        
-                        samples.append(sample)
-                
-            except Exception as e:
-                self.logger.error(f"Failed to process image {image_path}: {e}")
-                # Create error sample
-                samples.append({
-                    "id": f"translation_error_{idx}",
-                    "original_image_path": str(image_path),
-                    "processing_status": "failed",
-                    "error": str(e)
-                })
-        
-        # Create comprehensive dataset
-        if samples:
-            # Separate successful and failed samples
-            successful_samples = [s for s in samples if s.get("processing_status") == "success"]
-            
-            if successful_samples:
-                # Extract data for comprehensive dataset
-                images = [s["image"] for s in successful_samples]
-                image_paths = [s["image_path"] for s in successful_samples]
-                pdf_names = [s["pdf_name"] for s in successful_samples]
-                page_numbers = [s["page_number"] for s in successful_samples]
-                markdown_content = [s["markdown"] for s in successful_samples]
-                html_content = [s["html"] for s in successful_samples]
-                
-                dataset = self._create_comprehensive_hf_dataset(
-                    images=images,
-                    image_paths=image_paths,
-                    pdf_names=pdf_names,
-                    page_numbers=page_numbers,
-                    markdown_content=markdown_content,
-                    html_content=html_content,
-                    additional_metadata={
-                        "workflow": "document_translation",
-                        "config": config.dict(),
-                        "target_languages": config.target_languages,
-                        "total_samples": len(successful_samples),
-                        "failed_samples": len(samples) - len(successful_samples)
+                    output_filename = f"translated_{lang}_{idx}_{Path(image_path).stem}.jpg"
+                    output_path = os.path.join(self.save_dir, output_filename)
+                    cv2.imwrite(output_path, img)
+                    
+                    # Create result record
+                    result = {
+                        "id": f"translation_{lang}_{idx}",
+                        "original_image_path": str(image_path),
+                        "translated_image_path": output_path,
+                        "target_language": lang,
+                        "font_used": data.get("font_used", "default"),
+                        "num_regions": len(data.get("regions", [])),
+                        "regions_data": json.dumps(data.get("regions", [])),
+                        "source_type": "pdf" if str(image_path).find("temp_pdf_images") != -1 else "image"
                     }
-                )
-            else:
-                dataset = Dataset.from_dict({})
+                    
+                    # Add image to result for dataset
+                    translated_img = Image.open(output_path)
+                    result["image"] = translated_img
+                    result["image_path"] = output_path
+                    
+                    all_results.append(result)
+                    
+            except Exception as e:
+                self.logger.error(f"❌ Failed to process {image_path}: {e}")
+                continue
+        
+        # Step 5: Create HuggingFace dataset structure
+        dataset_dir = os.path.join(self.save_dir, "dataset")
+        images_dir = os.path.join(dataset_dir, "images")
+        os.makedirs(images_dir, exist_ok=True)
+        
+        # Create metadata.jsonl file
+        metadata_path = os.path.join(dataset_dir, "metadata.jsonl")
+        output_files = []
+        
+        with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+            for result in all_results:
+                # Copy image to dataset images folder
+                original_img_path = result["translated_image_path"]
+                filename = os.path.basename(original_img_path)
+                new_img_path = os.path.join(images_dir, filename)
+                
+                # Copy the image
+                shutil.copy2(original_img_path, new_img_path)
+                output_files.append(new_img_path)
+                
+                # Create metadata entry
+                metadata_entry = {
+                    "file_name": filename,
+                    "image_path": f"images/{filename}",
+                    "id": result["id"],
+                    "original_image_path": result["original_image_path"],
+                    "target_language": result["target_language"],
+                    "font_used": result["font_used"],
+                    "num_regions": result["num_regions"],
+                    "regions_data": result["regions_data"],
+                    "source_type": result["source_type"]
+                }
+                
+                # Write to metadata.jsonl
+                metadata_file.write(json.dumps(metadata_entry, ensure_ascii=False) + "\n")
+        
+        # Step 6: Save JSON output for each language (legacy format)
+        for lang in config.target_languages:
+            lang_results = [r for r in all_results if r["target_language"] == lang]
+            if lang_results:
+                json_path = os.path.join(self.save_dir, f"translations_{lang}.json")
+                json_data = {
+                    "language": lang,
+                    "total_images": len(lang_results),
+                    "results": [
+                        {
+                            "image_id": r["id"],
+                            "original_path": r["original_image_path"],
+                            "translated_path": r["translated_image_path"],
+                            "font_used": r["font_used"],
+                            "regions": json.loads(r["regions_data"])
+                        }
+                        for r in lang_results
+                    ]
+                }
+                with open(json_path, "w", encoding="utf-8") as f:
+                    json.dump(json_data, f, ensure_ascii=False, indent=2)
+                self.logger.info(f"💾 Saved JSON output for {lang} to {json_path}")
+        
+        # Step 7: Create HuggingFace dataset directly from results
+        if all_results:
+            # Create dataset dict directly from results
+            dataset_dict = {
+                "image": [],
+                "file_name": [],
+                "image_path": [],
+                "id": [],
+                "original_image_path": [],
+                "target_language": [],
+                "font_used": [],
+                "num_regions": [],
+                "regions_data": [],
+                "source_type": []
+            }
+            
+            # Add each result to the dataset
+            for result in all_results:
+                filename = os.path.basename(result["translated_image_path"])
+                new_img_path = os.path.join(images_dir, filename)
+                
+                # Load the image for the dataset
+                image = Image.open(new_img_path)
+                
+                dataset_dict["image"].append(image)
+                dataset_dict["file_name"].append(filename)
+                dataset_dict["image_path"].append(f"images/{filename}")
+                dataset_dict["id"].append(result["id"])
+                dataset_dict["original_image_path"].append(result["original_image_path"])
+                dataset_dict["target_language"].append(result["target_language"])
+                dataset_dict["font_used"].append(result["font_used"])
+                dataset_dict["num_regions"].append(result["num_regions"])
+                dataset_dict["regions_data"].append(result["regions_data"])
+                dataset_dict["source_type"].append(result["source_type"])
+            
+            dataset = Dataset.from_dict(dataset_dict)
+            self.logger.info(f"📦 Created HuggingFace dataset with {len(dataset)} samples")
+            self.logger.info(f"📁 Dataset structure: {dataset_dir}")
+            self.logger.info(f"   - Images: {images_dir}")
+            self.logger.info(f"   - Metadata: {metadata_path}")
+            
         else:
             dataset = Dataset.from_dict({})
+            output_files = []
         
-        # Create output files list
-        output_files = [s.get("translated_image_path") for s in samples if "translated_image_path" in s]
+        # Clean up temporary PDF image directories
+        for temp_dir in pdf_temp_dirs:
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception:
+                pass  # Ignore cleanup errors
         
         processing_time = time.time() - start_time
+        
+        self.logger.info(f"✅ Translation completed: {len(all_results)} translated documents in {processing_time:.2f}s")
         
         return WorkflowResult(
             dataset=dataset,
             metadata={
                 "workflow_type": "document_translation",
                 "target_languages": config.target_languages,
-                "total_input_images": len(image_paths),
-                "successful_translations": len([s for s in samples if s.get("processing_status") == "success"]),
-                "failed_translations": len([s for s in samples if s.get("processing_status") == "failed"]),
+                "total_input_files": len(input_paths),
+                "total_images_processed": len(all_image_paths),
+                "successful_translations": len(all_results),
+                "pdfs_converted": len(files['pdfs']),
+                "images_processed": len(files['images']),
                 "yolo_model": config.yolo_model_path,
                 "font_path": config.font_path,
                 "processing_time": processing_time,
+                "dataset_structure": {
+                    "dataset_dir": dataset_dir if all_results else None,
+                    "images_dir": images_dir if all_results else None,
+                    "metadata_file": metadata_path if all_results else None,
+                    "total_images": len(output_files)
+                },
                 "generated_files": [os.path.basename(f) for f in output_files]
             },
-            num_samples=len([s for s in samples if s.get("processing_status") == "success"]),
+            num_samples=len(all_results),
             output_files=output_files
         )
     
-    def _get_image_paths(self, config: DocumentTranslationConfig) -> List[str]:
-        """Extract image paths from various input formats."""
-        image_paths = []
-        
-        # Handle input images
-        if config.input_images:
-            for img_input in config.input_images:
-                if isinstance(img_input, (str, Path)):
-                    img_path = Path(img_input)
-                    if img_path.is_file():
-                        image_paths.append(str(img_path))
-                    elif img_path.is_dir():
-                        # Add all images in directory
-                        for ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']:
-                            image_paths.extend(glob.glob(str(img_path / f"*{ext}")))
-                            image_paths.extend(glob.glob(str(img_path / f"*{ext.upper()}")))
-        
-        # Handle dataset input
-        if config.input_dataset:
-            for sample in config.input_dataset:
-                if 'image_path' in sample:
-                    image_paths.append(sample['image_path'])
-                elif 'image' in sample and hasattr(sample['image'], 'save'):
-                    # Save PIL image to temp file
-                    temp_path = os.path.join(self.save_dir, f"temp_input_{len(image_paths)}.png")
-                    sample['image'].save(temp_path)
-                    image_paths.append(temp_path)
-        
-        return image_paths
+    def _create_fallback_result(self, error_msg: str, start_time: float) -> WorkflowResult:
+        """Create a fallback result for errors."""
+        return WorkflowResult(
+            dataset=Dataset.from_dict({}),
+            metadata={
+                "workflow_type": "document_translation",
+                "status": "failed",
+                "error": error_msg,
+                "processing_time": time.time() - start_time
+            },
+            num_samples=0
+        )
     
-    def _extract_markdown_from_regions(self, regions: List[Dict]) -> str:
-        """Extract markdown representation from translation regions."""
-        markdown_lines = []
+    @classmethod
+    def load_dataset_from_directory(cls, dataset_dir: str) -> Dataset:
+        """
+        Load a HuggingFace dataset from a directory containing images and metadata.jsonl.
         
-        for region in regions:
-            layout_type = region.get("layout_type", "")
-            text = region.get("translated_text") or region.get("english_text", "")
+        Args:
+            dataset_dir: Path to the directory containing 'images/' folder and 'metadata.jsonl'
             
-            if not text:
-                continue
-                
-            if layout_type == "title":
-                markdown_lines.append(f"# {text}")
-            elif layout_type == "text":
-                markdown_lines.append(text)
-            elif layout_type == "caption":
-                markdown_lines.append(f"*{text}*")
-            elif layout_type == "formula":
-                markdown_lines.append(f"$$\n{text}\n$$")
+        Returns:
+            Dataset: HuggingFace dataset with images and metadata
+        """
+        metadata_path = os.path.join(dataset_dir, "metadata.jsonl")
         
-        return "\n\n".join(markdown_lines)
-    
-    def _extract_html_from_regions(self, regions: List[Dict]) -> str:
-        """Extract HTML representation from translation regions."""
-        html_parts = []
+        if not os.path.exists(metadata_path):
+            raise FileNotFoundError(f"metadata.jsonl not found in {dataset_dir}")
         
-        for region in regions:
-            layout_type = region.get("layout_type", "")
-            text = region.get("translated_text") or region.get("english_text", "")
-            
-            if not text:
-                continue
-                
-            if layout_type == "title":
-                html_parts.append(f"<h1>{text}</h1>")
-            elif layout_type == "text":
-                html_parts.append(f"<p>{text}</p>")
-            elif layout_type == "caption":
-                html_parts.append(f"<em>{text}</em>")
-            elif layout_type == "formula":
-                html_parts.append(f"<div class='formula'>{text}</div>")
+        dataset_records = []
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            for line in f:
+                record = json.loads(line.strip())
+                # Load the image
+                img_path = os.path.join(dataset_dir, record["image_path"])
+                if os.path.exists(img_path):
+                    image = Image.open(img_path)
+                    record["image"] = image
+                    dataset_records.append(record)
         
-        return "\n".join(html_parts) 
+        if not dataset_records:
+            return Dataset.from_dict({})
+        
+        # Create dataset from records
+        dataset_dict = {
+            "image": [r["image"] for r in dataset_records],
+            "file_name": [r["file_name"] for r in dataset_records],
+            "image_path": [r["image_path"] for r in dataset_records],
+            "id": [r["id"] for r in dataset_records],
+            "original_image_path": [r["original_image_path"] for r in dataset_records],
+            "target_language": [r["target_language"] for r in dataset_records],
+            "font_used": [r["font_used"] for r in dataset_records],
+            "num_regions": [r["num_regions"] for r in dataset_records],
+            "regions_data": [r["regions_data"] for r in dataset_records],
+            "source_type": [r["source_type"] for r in dataset_records]
+        }
+        
+        return Dataset.from_dict(dataset_dict)

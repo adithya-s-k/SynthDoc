@@ -568,10 +568,11 @@ class DocumentTranslationConfig(BaseModel):
         default=["hi"], description="Target languages for translation (e.g., ['hi', 'zh', 'fr'])"
     )
     yolo_model_path: str = Field(
-        default="/SynthDoc/model-doclayout-yolo.pt",
+        default="./model-doclayout-yolo.pt",
         description="Path to the YOLO layout detection model"
     )
     font_path: str = Field(
+        default="./synthdoc/fonts/",
         description="Path to directory containing language-specific fonts"
     )
     confidence_threshold: float = Field(
@@ -599,7 +600,7 @@ class DocumentTranslationConfig(BaseModel):
         """Validate that YOLO model path exists."""
         if not Path(v).exists():
             # For the default model path, provide a helpful warning instead of failing
-            if v == "/SynthDoc/model-doclayout-yolo.pt":
+            if v == "./model-doclayout-yolo.pt":
                 print(f"⚠️  Warning: Default YOLO model not found at {v}")
                 print("   Download the model from: https://huggingface.co/vikp/doclayout-yolo/tree/main")
                 print("   Or provide a custom yolo_model_path parameter")
@@ -611,7 +612,12 @@ class DocumentTranslationConfig(BaseModel):
     def validate_font_path(cls, v):
         """Validate that font path exists."""
         if not Path(v).exists():
-            raise ValueError(f"Font path does not exist: {v}")
+            # For the default font path, provide a helpful warning instead of failing
+            if v == "./synthdoc/fonts/":
+                print(f"⚠️  Warning: Default font path not found at {v}")
+                print("   Please ensure SynthDoc fonts are available or provide a custom font_path parameter")
+            else:
+                raise ValueError(f"Font path does not exist: {v}")
         return v
 
     @validator('input_dataset')
