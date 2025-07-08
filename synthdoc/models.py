@@ -517,6 +517,19 @@ class VQAGenerationConfig(BaseModel):
     documents: List[Union[str, Path]] = Field(
         description="Source documents for VQA generation"
     )
+
+    input_folder: Optional[Union[str, Path]] = Field(
+        default = None, description="Folder containing images / PDFs to process"
+    )
+    
+    processing_mode: str = Field(
+        default="LLM", description="User-selected processing mode: 'LLM' for text-only or 'VLM' for vision+text"
+    )
+    
+    vlm_model: Optional[str] = Field(
+        default = None, description = "Vision model"
+    )
+
     num_questions_per_doc: int = Field(
         default=5, ge=1, description="Number of questions per document"
     )
@@ -532,6 +545,9 @@ class VQAGenerationConfig(BaseModel):
     )
     output_format: OutputFormat = Field(
         default=OutputFormat.HUGGINGFACE, description="Output format"
+    )
+    output_path: Optional[Union[str, Path]] = Field(
+        default="vqa_output", description="Output directory for generated datasets"
     )
 
 
