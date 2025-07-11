@@ -236,9 +236,13 @@ class BaseWorkflow(ABC):
         """Create layout detection ground truth metadata."""
         element_types = []
         element_counts = {}
-        
+
         for annotation in layout_annotations:
-            element_type = annotation.get("type", "unknown")
+            # Handle case where annotation might be a string or other type
+            if isinstance(annotation, dict):
+                element_type = annotation.get("type", "unknown")
+            else:
+                element_type = "unknown"
             element_types.append(element_type)
             element_counts[element_type] = element_counts.get(element_type, 0) + 1
         
@@ -249,9 +253,9 @@ class BaseWorkflow(ABC):
             "content_elements": len(content_list),
             "layout_complexity": self._assess_layout_complexity(layout_annotations),
             "has_multi_column": self._detect_multi_column_layout(layout_annotations),
-            "text_regions": len([a for a in layout_annotations if a.get("type") == "text"]),
-            "image_regions": len([a for a in layout_annotations if a.get("type") == "image"]),
-            "table_regions": len([a for a in layout_annotations if a.get("type") == "table"])
+            "text_regions": len([a for a in layout_annotations if isinstance(a, dict) and a.get("type") == "text"]),
+            "image_regions": len([a for a in layout_annotations if isinstance(a, dict) and a.get("type") == "image"]),
+            "table_regions": len([a for a in layout_annotations if isinstance(a, dict) and a.get("type") == "table"])
         }
 
     def _create_pdf_info_metadata(self, pdf_name: str, page_number: int, additional_metadata: Dict) -> Dict[str, Any]:
@@ -283,16 +287,17 @@ class BaseWorkflow(ABC):
     def _detect_multi_column_layout(self, layout_annotations: List[Dict]) -> bool:
         """Detect if the layout has multiple columns."""
         # Simple heuristic: if there are text elements with significantly different x positions
-        text_elements = [a for a in layout_annotations if a.get("type") == "text"]
-        
+        text_elements = [a for a in layout_annotations if isinstance(a, dict) and a.get("type") == "text"]
+
         if len(text_elements) < 2:
             return False
-        
+
         x_positions = []
         for element in text_elements:
-            bbox = element.get("bbox", [0, 0, 0, 0])
-            if len(bbox) >= 4:
-                x_positions.append(bbox[0])  # Left x coordinate
+            if isinstance(element, dict):
+                bbox = element.get("bbox", [0, 0, 0, 0])
+                if len(bbox) >= 4:
+                    x_positions.append(bbox[0])  # Left x coordinate
         
         if len(set(x_positions)) > 1:
             # Check if there are distinct column positions

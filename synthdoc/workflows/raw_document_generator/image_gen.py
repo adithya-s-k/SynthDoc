@@ -58,7 +58,7 @@ def create_multicolumn_document_image(text: str, config, page_num: int = 0,
     if hasattr(layout_type, 'value'):
         layout_type = layout_type.value
     
-    # Calculate columns
+    # Calculate columns based on layout type
     if layout_type == "TWO_COLUMN":
         num_columns = 2
         column_gap = 30
@@ -67,10 +67,40 @@ def create_multicolumn_document_image(text: str, config, page_num: int = 0,
         num_columns = 3
         column_gap = 20
         column_width = (page_width - 2 * margin - 2 * column_gap) // 3
+    elif layout_type == "FOUR_COLUMN":
+        num_columns = 4
+        column_gap = 15
+        column_width = (page_width - 2 * margin - 3 * column_gap) // 4
     elif layout_type == "NEWSLETTER":
         num_columns = 2
         column_gap = 40
         column_width = (page_width - 2 * margin - column_gap) // 2
+    elif layout_type == "MAGAZINE":
+        # Magazine style: 3 columns with wider gaps
+        num_columns = 3
+        column_gap = 25
+        column_width = (page_width - 2 * margin - 2 * column_gap) // 3
+    elif layout_type == "ACADEMIC":
+        # Academic style: 2 columns with narrow gaps
+        num_columns = 2
+        column_gap = 20
+        column_width = (page_width - 2 * margin - column_gap) // 2
+    elif layout_type == "NEWSPAPER":
+        # Newspaper style: 4 narrow columns
+        num_columns = 4
+        column_gap = 12
+        column_width = (page_width - 2 * margin - 3 * column_gap) // 4
+    elif layout_type == "BROCHURE":
+        # Brochure style: 3 columns with medium gaps
+        num_columns = 3
+        column_gap = 18
+        column_width = (page_width - 2 * margin - 2 * column_gap) // 3
+    elif layout_type == "REPORT":
+        # Report style: single column with wider margins
+        num_columns = 1
+        column_gap = 0
+        margin = 80  # Wider margins for reports
+        column_width = page_width - 2 * margin
     else:  # SINGLE_COLUMN
         num_columns = 1
         column_gap = 0

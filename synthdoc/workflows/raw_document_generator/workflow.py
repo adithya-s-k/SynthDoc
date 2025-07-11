@@ -21,7 +21,6 @@ class RawDocumentGenerator(BaseWorkflow):
         self.save_dir = save_dir
         self._setup_save_directory()
         self._setup_apis(groq_api_key)
-        # Single English prompt template with language variable
         self.base_prompt_template = "Write a comprehensive, well-structured document in {language} about"
         self.cost_tracker = CostTracker()
 
@@ -46,7 +45,7 @@ class RawDocumentGenerator(BaseWorkflow):
         litellm.request_timeout = 120  # Longer timeout for document generation
         litellm.drop_params = True  # Auto-handle unsupported parameters
         
-        # Note: Removed HuggingFace upload functionality as requested
+        #can add over here the huggingface upload functinality... 
 
     def _enhance_prompt(self, prompt: str, num_pages: int, language: Language) -> str:
         """Enhance prompt for better content generation."""
@@ -63,9 +62,13 @@ class RawDocumentGenerator(BaseWorkflow):
         """
         
         try:
+            # Get model from config
+            from ...config import get_llm_model
+            model = get_llm_model("auto")
+
             # Use LiteLLM's built-in retry logic
             response = litellm.completion(
-                model="groq/llama3-8b-8192",
+                model=model,
                 messages=[
                     {"role": "system", "content": "You are an expert content strategist."},
                     {"role": "user", "content": enhancement_prompt}
@@ -74,9 +77,9 @@ class RawDocumentGenerator(BaseWorkflow):
                 temperature=0.7
                 # Built-in retry and timeout handled by global config
             )
-            
+
             # Track cost with dynamic pricing
-            cost = self.cost_tracker.track_usage(response, model="groq/llama3-8b-8192")
+            cost = self.cost_tracker.track_usage(response, model=model)
             print(f"💰 Prompt Enhancement: ${cost:.6f}")
             time.sleep(2)
             
@@ -102,20 +105,41 @@ class RawDocumentGenerator(BaseWorkflow):
         words_per_page = 1000
         target_words = config.num_pages * words_per_page
         
-        # Single English prompt with language variable
+        # Strengthen language instructions for better compliance
+        if language_name.lower() == "english":
+            lang_instruction = "Write the entire document in English."
+        else:
+            lang_instruction = f"""
+            CRITICAL LANGUAGE REQUIREMENT: You MUST write the ENTIRE document in {language_name} language only.
+            Do NOT use English or any other language. Every single word, sentence, and paragraph must be in {language_name}.
+            If you cannot write in {language_name}, respond with "I cannot generate content in {language_name}".
+            """
+
+        # Single prompt with strong language enforcement
         full_prompt = f"""
         {self.base_prompt_template.format(language=language_name)} {enhanced_topic}.
         Write approximately {target_words} words with EXTENSIVE detail and comprehensive analysis.
         Include multiple detailed sections, each with 4-5 paragraphs minimum.
-        IMPORTANT: Write the entire document in {language_name} language only.
+
+        {lang_instruction}
         """
+
+        # Strong system message with language enforcement
+        system_msg = f"""You are an expert multilingual writer. {lang_instruction}
+
+        STRICT RULES:
+        1. Write ONLY in {language_name} language
+        2. Do NOT mix languages
+        3. Do NOT use English unless the target language IS English
+        4. Every word must be in {language_name}"""
         
-        # English system message with language instruction
-        system_msg = f"You are an expert writer creating high-quality documents. Write the entire response in {language_name} language only. Do not use any other language."
-        
+        # Get model from config instead of hardcoding
+        from ...config import get_llm_model
+        model = get_llm_model("auto")
+
         # Use LiteLLM's built-in retry logic
         response = litellm.completion(
-            model="groq/llama3-8b-8192",
+            model=model,
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": full_prompt}
@@ -124,9 +148,9 @@ class RawDocumentGenerator(BaseWorkflow):
             temperature=0.7
             # num_retries and timeout handled by global LiteLLM config
         )
-        
+
         # Track cost using dynamic pricing
-        cost = self.cost_tracker.track_usage(response, model="groq/llama3-8b-8192")
+        cost = self.cost_tracker.track_usage(response, model=model)
         print(f"Content Generation: ${cost:.6f}")
         
         content = response.choices[0].message.content.strip()
@@ -157,10 +181,17 @@ class RawDocumentGenerator(BaseWorkflow):
         )
         
         # Convert metadata to expected format
+        layout_type = getattr(config, 'layout_type', 'SINGLE_COLUMN')
+        # Convert LayoutType enum to string if needed
+        if hasattr(layout_type, 'value'):
+            layout_type_str = layout_type.value
+        else:
+            layout_type_str = str(layout_type)
+
         layout_info = {
             "page_dimensions": {"width": 800, "height": 1000},
             "margins": metadata.get('layout_info', {}).get('margin', 60),
-            "layout_type": getattr(config, 'layout_type', 'SINGLE_COLUMN'),
+            "layout_type": layout_type_str,
             "has_graphs": config.include_graphs,
             "has_tables": config.include_tables,
             "has_ai_images": config.include_ai_images,
@@ -227,13 +258,14 @@ class RawDocumentGenerator(BaseWorkflow):
             'page_number': page_num - 1,
             'markdown': f"# Page {page_num}\n\n{text}",
             'html': f"<h1>Page {page_num}</h1>\n<p>{text.replace(chr(10), '</p><p>')}</p>",
-            'layout': str(layout_info),
-            'lines': str(lines_data),
-            'images': str(images_data),
+            'layout': json.dumps(layout_info),
+            'lines': json.dumps(lines_data),
+            'images': json.dumps(images_data),
+            'tables': json.dumps(tables_data),
             'equations': "[]",
             'tables': str(tables_data),
             'page_size': "800x1000",
-            'content_list': str(content_list),
+            'content_list': json.dumps(content_list),
             'base_layout_detection': str({"page_layout": {"type": "single_column"}}),
             'pdf_info': str({"filename": pdf_name, "page_count": config.num_pages}),
             'system_prompt': "Generate high-quality synthetic documents for training ML models",
@@ -255,7 +287,8 @@ class RawDocumentGenerator(BaseWorkflow):
         # sentences = content.split('. ')
         # sentences_per_page = len(sentences) // config.num_pages if config.num_pages > 0 else len(sentences)
         
-        pdf_name = f"document_{config.language.value}_{random.randint(10000, 99999)}.pdf"
+        lang_code = config.language.value if hasattr(config.language, 'value') else str(config.language)
+        pdf_name = f"document_{lang_code}_{random.randint(10000, 99999)}"
         
         for page_num in range(1, config.num_pages + 1):
             # start_idx = (page_num - 1) * sentences_per_page
@@ -266,7 +299,7 @@ class RawDocumentGenerator(BaseWorkflow):
 
 
             if start_idx < len(words):
-                page_text = '. '.join(words[start_idx:end_idx])
+                page_text = ' '.join(words[start_idx:end_idx])
             else:
                 # Generate additional content for extra pages
                 additional_content = self._generate_content(
@@ -371,12 +404,12 @@ class RawDocumentGenerator(BaseWorkflow):
         for s in samples:
             # Convert string representations back to lists/dicts
             try:
-                layout_data = eval(s.get('layout', '[]')) if isinstance(s.get('layout'), str) else s.get('layout', [])
-                lines_data = eval(s.get('lines', '[]')) if isinstance(s.get('lines'), str) else s.get('lines', [])
-                images_data = eval(s.get('images', '[]')) if isinstance(s.get('images'), str) else s.get('images', [])
-                equations_data = eval(s.get('equations', '[]')) if isinstance(s.get('equations'), str) else s.get('equations', [])
-                tables_data = eval(s.get('tables', '[]')) if isinstance(s.get('tables'), str) else s.get('tables', [])
-                content_data = eval(s.get('content_list', '[]')) if isinstance(s.get('content_list'), str) else s.get('content_list', [])
+                layout_data = json.loads(s.get('layout', '[]'))
+                lines_data = json.loads(s.get('lines', '[]'))
+                images_data = json.loads(s.get('images', '[]'))
+                equations_data = json.loads(s.get('equations', '[]'))
+                tables_data = json.loads(s.get('tables', '[]'))
+                content_data = json.loads(s.get('content_list', '[]'))
             except:
                 layout_data = []
                 lines_data = []
