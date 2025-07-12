@@ -169,11 +169,16 @@ class BaseWorkflow(ABC):
         # Create samples list for Dataset
         samples = []
         for i in range(num_samples):
+            # Handle case where image might be None (e.g., for PDFs)
+            image = images[i]
+            image_width = image.width if image else None
+            image_height = image.height if image else None
+
             sample = {
                 # Core image data
-                "image": images[i],
-                "image_width": images[i].width,
-                "image_height": images[i].height,
+                "image": image,
+                "image_width": image_width,
+                "image_height": image_height,
                 "image_path": image_paths[i],
                 
                 # Document identification
@@ -192,7 +197,7 @@ class BaseWorkflow(ABC):
                 "tables": tables[i],
                 
                 # Page and document metadata
-                "page_size": [images[i].width, images[i].height],
+                "page_size": [image_width, image_height] if image else [None, None],
                 "content_list": content_lists[i],
                 
                 # Layout detection ground truth
