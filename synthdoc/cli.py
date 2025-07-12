@@ -29,9 +29,7 @@ def generate(
     prompt: Optional[str] = typer.Option(
         None, "--prompt", help="Custom generation prompt"
     ),
-    augment: List[str] = typer.Option(
-        [], "--augment", "-a", help="Augmentation techniques"
-    ),
+    # Removed augment parameter - augmentation not implemented
     model: str = typer.Option(
         "gpt-4o-mini", "--model", "-m", help="LLM model for content generation"
     ),
@@ -48,7 +46,7 @@ def generate(
 
     try:
         documents = synth.generate_raw_docs(
-            language=language, num_pages=pages, prompt=prompt, augmentations=augment
+            language=language, num_pages=pages, prompt=prompt
         )
 
         console.print(f"[green]✓ Generated {len(documents)} documents[/green]")
@@ -75,59 +73,7 @@ def languages():
     console.print(table)
 
 
-@app.command()
-def layout(
-    input_dir: str = typer.Argument(..., help="Input directory with documents"),
-    output: str = typer.Option("./output", "--output", "-o", help="Output directory"),
-    languages: List[str] = typer.Option(
-        ["en"], "--lang", "-l", help="Target languages"
-    ),
-    fonts: List[str] = typer.Option([], "--font", "-f", help="Font families"),
-    augment: List[str] = typer.Option(
-        [], "--augment", "-a", help="Augmentation techniques"
-    ),
-    model: str = typer.Option(
-        "gpt-4o-mini", "--model", "-m", help="LLM model for content generation"
-    ),
-    api_key: Optional[str] = typer.Option(
-        None, "--api-key", help="API key for LLM provider"
-    ),
-):
-    """Apply layout augmentation to documents."""
-    console.print(f"[green]Augmenting documents from {input_dir}[/green]")
-
-    input_path = Path(input_dir)
-    if not input_path.exists():
-        console.print(f"[red]Error: Input directory {input_dir} does not exist[/red]")
-        raise typer.Exit(1)
-
-    synth = SynthDoc(output_dir=output, llm_model=model, api_key=api_key)
-
-    try:
-        # Find document files
-        doc_files = (
-            list(input_path.glob("*.pdf"))
-            + list(input_path.glob("*.png"))
-            + list(input_path.glob("*.jpg"))
-        )
-
-        if not doc_files:
-            console.print(f"[red]No documents found in {input_dir}[/red]")
-            raise typer.Exit(1)
-
-        dataset = synth.augment_layout(
-            document_paths=doc_files,
-            languages=languages,
-            fonts=fonts,
-            augmentations=augment,
-        )
-
-        console.print(f"[green]✓ Layout augmentation complete[/green]")
-        console.print(f"[blue]Dataset saved to: {output}[/blue]")
-
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1)
+# Removed layout command - layout augmentation workflow not implemented
 
 
 @app.command()

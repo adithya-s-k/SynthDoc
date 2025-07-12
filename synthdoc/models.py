@@ -1,16 +1,13 @@
 """
-Pydantic models for SynthDoc dataset management.
-
-This module contains all the Pydantic models used for type-safe dataset management,
-including metadata structures, validation schemas, and configuration models.
+Data models for SynthDoc workflows and configuration.
 """
 
-from typing import Dict, List, Optional, Union, Any, Literal
-from pathlib import Path
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Union
 
-from pydantic import BaseModel, Field, validator, ConfigDict
+from pydantic import BaseModel, Field, validator, ConfigDict, model_validator
 from pydantic.types import UUID4
 from .languages import Language
 
@@ -402,13 +399,7 @@ def create_document_metadata(
     )
 
 
-class AugmentationType(Enum):
-    ROTATION = "rotation"
-    SCALING = "scaling"
-    NOISE = "noise"
-    BLUR = "blur"
-    COLOR_SHIFT = "color_shift"
-    CROPPING = "cropping"
+# Removed unused AugmentationType enum
 
 
 class LayoutType(Enum):
@@ -451,63 +442,13 @@ class RawDocumentGenerationConfig(BaseModel):
     include_ai_images: bool = Field(
         default=False, description="Include AI-generated images"
     )
-    augmentations: Optional[List[AugmentationType]] = Field(
-        default=None, description="List of augmentations to apply"
-    )
+    # Removed augmentations field - not implemented yet
     output_format: OutputFormat = Field(
         default=OutputFormat.HUGGINGFACE, description="Output format"
     )
 
 
-# Layout Augmentation Workflow
-class LayoutAugmentationConfig(BaseModel):
-    """Configuration for applying layout transformations to existing documents."""
-
-    documents: List[Union[str, Path]] = Field(
-        description="List of PDF files or images to process"
-    )
-    languages: List[Language] = Field(
-        default=[Language.EN], description="Target languages for text content"
-    )
-    fonts: Optional[List[str]] = Field(
-        default=None, description="Font families to apply"
-    )
-    augmentations: Optional[List[AugmentationType]] = Field(
-        default=None, description="Visual augmentations"
-    )
-    layout_templates: Optional[List[str]] = Field(
-        default=None, description="Predefined layout templates"
-    )
-    output_format: OutputFormat = Field(
-        default=OutputFormat.HUGGINGFACE, description="Output format"
-    )
-
-
-# PDF Augmentation Workflow
-class PDFAugmentationConfig(BaseModel):
-    """Configuration for augmenting existing PDF documents."""
-
-    pdf_files: List[Union[str, Path]] = Field(
-        description="List of PDF files to augment"
-    )
-    extraction_elements: Optional[List[str]] = Field(
-        default=None, description="Types of elements to extract (text_blocks, headers, images, tables, etc.)"
-    )
-    combination_strategy: str = Field(
-        default="random", description="Method for combining extracted elements"
-    )
-    num_generated_docs: int = Field(
-        default=5, ge=1, description="Number of new documents to generate"
-    )
-    augmentations: Optional[List[AugmentationType]] = Field(
-        default=None, description="Augmentations to apply"
-    )
-    preserve_text: bool = Field(
-        default=True, description="Whether to preserve original text"
-    )
-    output_format: OutputFormat = Field(
-        default=OutputFormat.HUGGINGFACE, description="Output format"
-    )
+# Removed unused LayoutAugmentationConfig and PDFAugmentationConfig classes
 
 
 # VQA Generation Workflow
@@ -515,49 +456,79 @@ class VQAGenerationConfig(BaseModel):
     """Configuration for generating visual question-answering datasets."""
 
     documents: List[Union[str, Path]] = Field(
-        description="Source documents for VQA generation"
+        default_factory=list, description="Source documents for VQA generation (files or directories)"
+    )
+    single_image: Optional[Union[str, Path]] = Field(
+        default=None, description="Single image file for VQA generation"
+    )
+    image_folder: Optional[Union[str, Path]] = Field(
+        default=None, description="Folder containing images for VQA generation"
+    )
+    pdf_file: Optional[Union[str, Path]] = Field(
+        default=None, description="Single PDF file for VQA generation"
+    )
+    pdf_folder: Optional[Union[str, Path]] = Field(
+        default=None, description="Folder containing PDFs for VQA generation"
     )
     num_questions_per_doc: int = Field(
-        default=5, ge=1, description="Number of questions per document"
+        default=5, ge=1, description="Number of VQA pairs per image (fixed at 5 in current implementation)"
     )
     include_hard_negatives: bool = Field(
         default=True, description="Include hard negative examples"
     )
     question_types: Optional[List[str]] = Field(
-        default=None, description="Types of questions to generate"
+        default=None, description="Types of questions to generate (factual, reasoning, counting, etc.)"
     )
     difficulty_levels: Optional[List[str]] = Field(
         default=None,
         description="Difficulty levels for generated questions (easy, medium, hard, etc.)",
     )
-    output_format: OutputFormat = Field(
-        default=OutputFormat.HUGGINGFACE, description="Output format"
+    processing_mode: str = Field(
+        default="VLM", description="Processing mode: 'VLM' for vision+text or 'LLM' for text-only"
     )
-
-
-# Handwriting Generation Workflow
-class HandwritingGenerationConfig(BaseModel):
-    """Configuration for generating handwritten documents."""
-
-    text_content: Optional[str] = Field(
-        default=None, description="Text content to handwrite"
-    )
-    handwriting_style: str = Field(
-        default="default", description="Handwriting style to use"
-    )
-    paper_template: str = Field(
-        default="lined", description="Paper template (lined, grid, blank)"
-    )
-    language: Language = Field(default=Language.EN, description="Language for handwriting")
-    num_samples: int = Field(
-        default=1, ge=1, description="Number of handwriting samples to generate"
-    )
-    augmentations: Optional[List[AugmentationType]] = Field(
-        default=None, description="Augmentations to apply"
+    llm_model: str = Field(
+        default="gemini-2.5-flash", description="LLM model to use for VQA generation"
     )
     output_format: OutputFormat = Field(
         default=OutputFormat.HUGGINGFACE, description="Output format"
     )
+    
+    @model_validator(mode='before')
+    def collect_all_inputs(cls, values):
+        """Collect all input sources into the documents list."""
+        if isinstance(values, dict):
+            documents = values.get('documents', []) or []
+            
+            # Add single image
+            if values.get('single_image'):
+                documents.append(values['single_image'])
+            
+            # Add image folder
+            if values.get('image_folder'):
+                documents.append(values['image_folder'])
+            
+            # Add PDF file
+            if values.get('pdf_file'):
+                documents.append(values['pdf_file'])
+            
+            # Add PDF folder
+            if values.get('pdf_folder'):
+                documents.append(values['pdf_folder'])
+            
+            # Update documents list
+            values['documents'] = documents
+        
+        return values
+    
+    @model_validator(mode='after')
+    def validate_input_provided(self):
+        """Validate that at least one input source is provided."""
+        if not self.documents:
+            raise ValueError("At least one input source must be provided (documents, single_image, image_folder, pdf_file, or pdf_folder)")
+        return self
+
+
+# Removed unused HandwritingGenerationConfig class
 
 
 # Base Workflow Result

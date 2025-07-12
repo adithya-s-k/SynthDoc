@@ -31,7 +31,24 @@ Generate synthetic documents from scratch using Large Language Models (LLMs) to 
 2. Content is structured into document format with proper formatting
 3. Optional augmentations are applied (rotation, noise, etc.)
 
-**Output**: Documents with rich textual content ready for layout application
+**Output**: Standardized structure with:
+- `images/` folder containing generated document images (PNG format)
+- `metadata.jsonl` file with one JSON entry per image containing:
+  - `file_name`: Image filename
+  - `image_path`: Relative path to image (e.g., "images/document_en_12345_page_1.png")
+  - `id`: Unique identifier for the document page
+  - `document_id`: Identifier for the document collection
+  - `page_number`: Page number within the document
+  - `language`: Language of the generated content
+  - `prompt`: The prompt used for content generation
+  - `content_preview`: Preview of the generated text content
+  - `layout_type`: Layout style used (e.g., "SINGLE_COLUMN", "TWO_COLUMN")
+  - `has_graphs`: Whether the page includes generated graphs
+  - `has_tables`: Whether the page includes generated tables
+  - `has_ai_images`: Whether the page includes AI-generated images
+  - `generated_by`: Identifier for the generation workflow
+
+This structure matches the standardized format used by other SynthDoc workflows (VQA generation, document translation) for consistency and interoperability.
 
 ---
 

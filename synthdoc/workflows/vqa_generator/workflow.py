@@ -1,275 +1,552 @@
 import random
 import json
 import time
-from typing import List, Dict, Any, Optional
+import shutil
+import os
+from typing import List, Dict, Any, Optional, Union
+from pathlib import Path
 from PIL import Image
-import litellm
-from datasets import Dataset
 from ..base import BaseWorkflow
 from ...models import VQAGenerationConfig, WorkflowResult
 from ...utils import CostTracker
 
+# Google Gemini API
+try:
+    from google import genai
+    from google.genai import types
+    from pydantic import BaseModel, Field
+    from typing import List, Optional
+    import enum
+    GOOGLE_GENAI_AVAILABLE = True
+except ImportError:
+    GOOGLE_GENAI_AVAILABLE = False
+
+# PDF processing imports
+try:
+    import fitz  # PyMuPDF
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
+
+# OCR imports
+try:
+    import pytesseract
+    PYTESSERACT_AVAILABLE = True
+except ImportError:
+    PYTESSERACT_AVAILABLE = False
+
+# Language detection
+try:
+    from langdetect import detect
+    LANGDETECT_AVAILABLE = True
+except ImportError:
+    LANGDETECT_AVAILABLE = False
+
+
+# Pydantic models for structured output
+if GOOGLE_GENAI_AVAILABLE:
+    class VQADifficulty(str, enum.Enum):
+        EASY = "easy"
+        MEDIUM = "medium"
+        HARD = "hard"
+    
+    class VQAType(str, enum.Enum):
+        DESCRIPTIVE = "descriptive"
+        MCQ = "mcq"
+    
+    class VQAPair(BaseModel):
+        id: str = Field(description="Unique identifier for the VQA pair")
+        type: VQAType = Field(description="Type of question: descriptive or mcq")
+        difficulty: VQADifficulty = Field(description="Difficulty level of the question")
+        question: str = Field(description="The question text")
+        answer: str = Field(description="The correct answer")
+        explanation: str = Field(description="Brief explanation of the answer")
+        hard_negatives: Optional[List[str]] = Field(default=None, description="List of plausible but incorrect answers for descriptive questions")
+        choices: Optional[List[str]] = Field(default=None, description="List of all choices for MCQ questions")
+
+
+def collect_input_files(input_paths: List[Union[str, Path]]) -> Dict[str, List[str]]:
+    """
+    Collect and categorize input files from various sources.
+    Returns dict with 'images' and 'pdfs' lists.
+    """
+    images = []
+    pdfs = []
+    
+    image_extensions = {'.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.gif'}
+    pdf_extensions = {'.pdf'}
+    
+    for input_path in input_paths:
+        path = Path(input_path)
+        
+        if path.is_file():
+            # Single file
+            if path.suffix.lower() in image_extensions:
+                images.append(str(path))
+            elif path.suffix.lower() in pdf_extensions:
+                pdfs.append(str(path))
+                
+        elif path.is_dir():
+            # Directory - recursively find files
+            for file_path in path.rglob('*'):
+                if file_path.is_file():
+                    if file_path.suffix.lower() in image_extensions:
+                        images.append(str(file_path))
+                    elif file_path.suffix.lower() in pdf_extensions:
+                        pdfs.append(str(file_path))
+    
+    return {'images': images, 'pdfs': pdfs}
+
+
+def pdf_to_images(pdf_path: str, output_dir: str = None) -> List[str]:
+    """Convert PDF to images. Returns list of image paths."""
+    if not PDF_AVAILABLE:
+        raise ValueError("PDF processing not available. Install PyMuPDF or pdf2image")
+    
+    pdf_path = Path(pdf_path)
+    if output_dir is None:
+        output_dir = pdf_path.parent / "temp_images"
+    
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    image_paths = []
+    
+    try:
+        # Try PyMuPDF first (faster)
+        doc = fitz.open(str(pdf_path))
+        for page_num in range(doc.page_count):
+            page = doc[page_num]
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom for better quality
+            img_path = output_dir / f"{pdf_path.stem}_page_{page_num + 1}.png"
+            pix.save(str(img_path))
+            image_paths.append(str(img_path))
+        doc.close()
+        
+    except Exception as e:
+        print(f"Error converting PDF {pdf_path}: {e}")
+        return []
+    
+    return image_paths
+
 
 class VQAGenerator(BaseWorkflow):
-    """Generate visual question-answering datasets with LLM integration."""
+    """Generate visual question-answering datasets with Gemini 2.5 Flash and LiteLLM integration."""
 
-    def __init__(self, api_key: Optional[str] = None, llm_model: str = "gpt-4o-mini"):
+    def __init__(self, api_key: Optional[str] = None, llm_model: str = "gemini-2.5-flash", save_dir: str = "vqa_output"):
         super().__init__()
         self.api_key = api_key
         self.llm_model = llm_model
+        self.save_dir = save_dir
         self.cost_tracker = CostTracker()
+        self.temp_dir = Path("temp_pdf_images")
+        self.temp_dir.mkdir(exist_ok=True)
+        self._setup_save_directory()
         
-        # Setup LLM if API key provided
-        if api_key:
-            import os
-            if "gpt" in llm_model.lower():
-                os.environ["OPENAI_API_KEY"] = api_key
-            elif "claude" in llm_model.lower():
-                os.environ["ANTHROPIC_API_KEY"] = api_key
+        # Setup Google Gemini client if API key provided
+        self.gemini_client = None
+        if api_key and api_key != 'your_gemini_api_key_here' and GOOGLE_GENAI_AVAILABLE:
+            try:
+                self.gemini_client = genai.Client(api_key=api_key)
+                print(f"✅ Google Gemini client initialized with model: {llm_model}")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize Gemini client: {e}")
+                print(f"   API key starts with: {api_key[:10]}...")
+        elif api_key == 'your_gemini_api_key_here':
+            print("⚠️ Please set a valid GEMINI_API_KEY in your .env file")
+        elif api_key and not GOOGLE_GENAI_AVAILABLE:
+            print("⚠️ Google Gemini API not available. Install with: pip install google-genai")
+        elif not api_key:
+            print("⚠️ No GEMINI_API_KEY found in environment variables")
+
+    def _setup_save_directory(self):
+        """Create save directory structure with images folder and metadata.jsonl directly in save_dir."""
+        os.makedirs(self.save_dir, exist_ok=True)
+        
+        # Create images directory and metadata file directly in save_dir
+        self.images_dir = os.path.join(self.save_dir, "images")
+        self.metadata_file = os.path.join(self.save_dir, "metadata.jsonl")
+        
+        os.makedirs(self.images_dir, exist_ok=True)
+        
+        # Create metadata.jsonl if it doesn't exist
+        if not os.path.exists(self.metadata_file):
+            with open(self.metadata_file, 'w', encoding='utf-8') as f:
+                pass  # Create empty file
+        
+        print(f"✅ Save directory created: {self.save_dir}")
+        print(f"📂 Images will be saved to: {self.images_dir}")
+        print(f"📄 Metadata will be saved to: {self.metadata_file}")
+
+    def _detect_language(self, text: str) -> str:
+        """Detect the language of the text."""
+        if not LANGDETECT_AVAILABLE or not text.strip():
+            return "English"
+
+        try:
+            lang_code = detect(text)
+            # Map common language codes to full names
+            lang_map = {
+                'en': 'English', 'hi': 'Hindi', 'es': 'Spanish', 'fr': 'French',
+                'de': 'German', 'it': 'Italian', 'pt': 'Portuguese', 'ru': 'Russian',
+                'ja': 'Japanese', 'ko': 'Korean', 'zh': 'Chinese', 'ar': 'Arabic',
+                'bn': 'Bengali', 'ur': 'Urdu', 'ta': 'Tamil', 'te': 'Telugu',
+                'mr': 'Marathi', 'gu': 'Gujarati'
+            }
+            return lang_map.get(lang_code, 'English')
+        except:
+            return "English"
+
+    def _extract_text_with_ocr(self, image_path: str) -> Dict[str, Any]:
+        """Extract text from image using OCR."""
+        try:
+            if not PYTESSERACT_AVAILABLE:
+                return {"text": "", "confidence": 0.0, "error": "Tesseract not available"}
+            
+            image = Image.open(image_path)
+            text = pytesseract.image_to_string(image)
+            
+            # Simple confidence estimation based on text length and characters
+            confidence = min(0.9, len(text.strip()) / 100) if text.strip() else 0.0
+            
+            return {"text": text.strip(), "confidence": confidence}
+        except Exception as e:
+            return {"text": "", "confidence": 0.0, "error": str(e)}
 
     def process(self, config: VQAGenerationConfig) -> WorkflowResult:
         """Generate VQA dataset based on configuration."""
+        start_time = time.time()
+        
         print(f"🤖 Starting VQA generation for {len(config.documents)} documents...")
         
-        all_questions = []
-        all_answers = []
-        all_hard_negatives = []
-        all_metadata = []
+        # Step 1: Collect input files (similar to document translator)
+        input_paths = config.documents or []
+        files = collect_input_files(input_paths)
+        print(f"📁 Found {len(files['images'])} images and {len(files['pdfs'])} PDFs")
         
-        for doc_idx, doc_path in enumerate(config.documents):
-            print(f"Processing document {doc_idx + 1}/{len(config.documents)}: {doc_path}")
-            
-            # Load document content (this would need to be implemented based on document type)
-            doc_content = self._extract_document_content(doc_path)
-            
-            # Generate questions for this document
-            questions, answers, hard_negatives, metadata = self._generate_vqa_for_document(
-                doc_content, doc_path, config
-            )
-            
-            all_questions.extend(questions)
-            all_answers.extend(answers)
-            all_hard_negatives.extend(hard_negatives)
-            all_metadata.extend(metadata)
+        # Step 2: Convert PDFs to images
+        all_image_paths = files['images'].copy()
+        pdf_temp_dirs = []
         
-                # Create dataset samples for image-based VQA
-        samples = []
-        for i in range(len(all_questions)):
-            # Handle both document paths and image objects
-            doc_path = all_metadata[i]["document_path"]
-            
-            # Try to load image if document is an image file
-            image = None
-            if isinstance(doc_path, str) and doc_path.endswith(('.png', '.jpg', '.jpeg')):
-                try:
-                    from PIL import Image
-                    image = Image.open(doc_path)
-                except Exception as e:
-                    print(f"⚠️ Could not load image {doc_path}: {e}")
-            
-            sample = {
-                "id": f"vqa_{i}",
-                "image": image,  # Include image for VQA
-                "text": self._extract_document_content(doc_path),  # Include text content
-                "document_path": doc_path,
-                "question": all_questions[i],
-                "answer": all_answers[i],
-                "hard_negatives": all_hard_negatives[i] if i < len(all_hard_negatives) else [],
-                "question_type": all_metadata[i]["question_type"],
-                "difficulty": all_metadata[i]["difficulty"],
-                "similarity_scores": all_metadata[i].get("similarity_scores", []),
-                "metadata": {
-                    "source": str(doc_path),
-                    "language": "en",  # Default language
-                    "question_type": all_metadata[i]["question_type"]
-                }
-            }
-            samples.append(sample)
-
-        # Create comprehensive dataset using README schema
-        if not samples:
-            dataset = Dataset.from_dict({})
-        else:
-            # Extract data for comprehensive dataset creation
-            images = [s['image'] for s in samples]
-            image_paths = [s.get('image_path', '') for s in samples]
-            pdf_names = [s.get('pdf_name', f"vqa_doc_{i}") for i, s in enumerate(samples)]
-            page_numbers = [s.get('page_number', 0) for s in samples]
-            
-            # VQA-specific content with questions and answers
-            markdown_content = []
-            html_content = []
-            for s in samples:
-                q = s.get('question', '')
-                a = s.get('answer', '')
-                base_md = s.get('markdown', f"Document: {s.get('text', '')}")
-                base_html = s.get('html', f"<p>{s.get('text', '')}</p>")
+        for pdf_path in files['pdfs']:
+            try:
+                print(f"📄 Converting PDF: {Path(pdf_path).name}")
+                temp_dir = self.temp_dir / Path(pdf_path).stem
+                pdf_images = pdf_to_images(pdf_path, str(temp_dir))
+                all_image_paths.extend(pdf_images)
+                pdf_temp_dirs.append(temp_dir)
+                print(f"   ✅ Converted to {len(pdf_images)} images")
+            except Exception as e:
+                print(f"   ❌ Failed to convert PDF {pdf_path}: {e}")
+        
+        print(f"📄 Total images to process: {len(all_image_paths)}")
+        
+        # Step 3: Process all images for VQA (generate exactly 5 VQA pairs per image)
+        all_results = []
+        total_vqa_pairs = 0
+        
+        for idx, image_path in enumerate(all_image_paths):
+            try:
+                print(f"🔄 Processing image {idx + 1}/{len(all_image_paths)}: {Path(image_path).name}")
                 
-                enhanced_md = f"{base_md}\n\n**Question:** {q}\n**Answer:** {a}"
-                enhanced_html = f"{base_html}<br><strong>Q:</strong> {q}<br><strong>A:</strong> {a}"
+                # Generate exactly 5 VQA pairs for this image
+                vqa_result = self._generate_vqa_for_image(image_path, config, idx)
+                all_results.append(vqa_result)
+                total_vqa_pairs += vqa_result.get("num_vqa_pairs", 5)
                 
-                markdown_content.append(enhanced_md)
-                html_content.append(enhanced_html)
-            
-            dataset = self._create_comprehensive_hf_dataset(
-                images=images,
-                image_paths=image_paths,
-                pdf_names=pdf_names,
-                page_numbers=page_numbers,
-                markdown_content=markdown_content,
-                html_content=html_content,
-                additional_metadata={
-                    "workflow": "vqa_generation",
-                    "config": config.dict(),
-                    "total_cost": self.cost_tracker.get_summary()
-                }
-            )
-
+            except Exception as e:
+                print(f"❌ Failed to process {image_path}: {e}")
+                continue
+        
+        # Step 4: Save results with images folder and metadata.jsonl structure
+        output_files = self._save_vqa_results(all_results)
+        
+        # Cleanup temporary PDF images
+        self._cleanup_temp_files()
+        
         return WorkflowResult(
-            dataset=dataset,
+            dataset=None,
             metadata={
                 "workflow_type": "vqa_generation",
-                "total_questions": len(all_questions),
-                "cost_summary": self.cost_tracker.get_summary()
+                "total_images": len(all_results),
+                "total_vqa_pairs": total_vqa_pairs,
+                "vqa_pairs_per_image": 5,
+                "processing_time": time.time() - start_time,
+                "cost_summary": self.cost_tracker.get_summary(),
+                "output_structure": {
+                    "images_folder": self.images_dir,
+                    "metadata_file": self.metadata_file,
+                    "total_image_files": len(output_files),
+                    "structure": "Each image has 5 VQA pairs saved in single JSONL entry"
+                }
             },
-            num_samples=len(samples),
-            output_files=[]
+            num_samples=total_vqa_pairs,  # Total number of VQA pairs generated
+            output_files=output_files
         )
 
-    def _extract_document_content(self, doc_path: str) -> str:
-        """Extract text content from document."""
-        # This is a simplified version - would need to handle different document types
-        try:
-            if isinstance(doc_path, dict) and "content" in doc_path:
-                return doc_path["content"]
-            elif str(doc_path).endswith(('.txt', '.md')):
-                with open(doc_path, 'r', encoding='utf-8') as f:
-                    return f.read()
+    def _generate_vqa_for_image(self, image_path: str, config: VQAGenerationConfig, idx: int) -> Dict:
+        """Generate exactly 5 VQA pairs for a single image and return as single result."""
+        # Extract text content using OCR
+        ocr_result = self._extract_text_with_ocr(image_path)
+        detected_language = self._detect_language(ocr_result['text'])
+        
+        vqa_pairs = []
+        processing_mode = "template"  # Default fallback
+        
+        if self.gemini_client:
+            # Use Gemini 2.5 Flash for VQA generation - generates exactly 5 pairs
+            gemini_pairs = self._generate_gemini_vqa(image_path, ocr_result['text'])
+            
+            if gemini_pairs and len(gemini_pairs) >= 5:
+                # Use Gemini-generated pairs (take first 5 to ensure exactly 5)
+                processing_mode = "VLM"
+                for q_idx, pair in enumerate(gemini_pairs[:5]):  # Ensure exactly 5 pairs
+                    question = pair.get('question', f'Sample question {q_idx + 1}')
+                    answer = pair.get('answer', f'Sample answer {q_idx + 1}')
+                    explanation = pair.get('explanation', 'Generated by Gemini 2.5 Flash')
+                    question_type = pair.get('type', 'descriptive')
+                    difficulty = pair.get('difficulty', 'medium')
+                    
+                    # Handle hard negatives based on question type
+                    if question_type == 'mcq' and 'choices' in pair:
+                        # For MCQ, remove the correct answer from choices to get negatives
+                        neg_answers = [choice for choice in pair['choices'] if choice != answer]
+                    else:
+                        neg_answers = pair.get('hard_negatives', [])
+                    
+                    vqa_pair = {
+                        "question": question,
+                        "answer": answer,
+                        "explanation": explanation,
+                        "hard_negatives": neg_answers if config.include_hard_negatives else [],
+                        "question_type": question_type,
+                        "difficulty": difficulty
+                    }
+                    vqa_pairs.append(vqa_pair)
             else:
-                # For now, return sample content for testing
-                return f"Sample document content for {doc_path}"
-        except Exception as e:
-            print(f"⚠️ Error extracting content from {doc_path}: {e}")
-            return f"Sample document content for {doc_path}"
+                # Fallback to template-based generation if Gemini fails or returns insufficient pairs
+                print(f"⚠️ Gemini generated {len(gemini_pairs) if gemini_pairs else 0} pairs, falling back to template")
+                vqa_pairs = self._generate_template_vqa_pairs(ocr_result['text'])
+        else:
+            # Use fallback template-based generation for exactly 5 pairs
+            vqa_pairs = self._generate_template_vqa_pairs(ocr_result['text'])
+        
+        # Ensure we have exactly 5 pairs
+        while len(vqa_pairs) < 5:
+            # Fill with template pairs if needed
+            additional_pairs = self._generate_template_vqa_pairs(ocr_result['text'])
+            vqa_pairs.extend(additional_pairs)
+        
+        # Trim to exactly 5 pairs
+        vqa_pairs = vqa_pairs[:5]
+        
+        # Create single result entry with all 5 VQA pairs
+        result = {
+            "id": f"vqa_image_{idx}",
+            "image_path": image_path,
+            "vqa_pairs": vqa_pairs,
+            "source_text": ocr_result['text'],
+            "detected_language": detected_language,
+            "ocr_confidence": ocr_result.get('confidence', 0.0),
+            "num_vqa_pairs": len(vqa_pairs),
+            "metadata": {
+                "source_file": str(image_path),
+                "processing_mode": processing_mode,
+                "generated_by": "synthdoc_vqa_generator"
+            }
+        }
+        
+        return result
 
-    def _generate_vqa_for_document(self, content: str, doc_path: str, config: VQAGenerationConfig) -> tuple:
-        """Generate VQA pairs for a single document."""
-        questions = []
-        answers = []
-        hard_negatives = []
-        metadata = []
-        
-        question_types = config.question_types or ["factual", "reasoning", "comparative"]
-        
-        for q_idx in range(config.num_questions_per_doc):
-            question_type = question_types[q_idx % len(question_types)]
-            
-            if self.api_key and self.llm_model:
-                # Use LLM to generate high-quality questions
-                question, answer, neg_answers = self._generate_llm_vqa(
-                    content, question_type, doc_path
-                )
-            else:
-                # Use fallback template-based generation
-                question, answer, neg_answers = self._generate_template_vqa(
-                    content, question_type, q_idx
-                )
-            
-            questions.append(question)
-            answers.append(answer)
-            
-            # Add hard negatives if enabled
-            if config.include_hard_negatives:
-                hard_negatives.append(neg_answers)
-            else:
-                hard_negatives.append([])
-            
-            metadata.append({
-                "document_path": str(doc_path),
-                "question_type": question_type,
-                "difficulty": self._assess_difficulty(question),
-                "similarity_scores": self._calculate_similarity_scores(answer, neg_answers)
-            })
-        
-        return questions, answers, hard_negatives, metadata
-
-    def _generate_llm_vqa(self, content: str, question_type: str, doc_path: str) -> tuple:
-        """Generate VQA using LLM."""
+    def _generate_gemini_vqa(self, image_path: str, ocr_text: str) -> List[Dict]:
+        """Generate VQA pairs using Google Gemini API with structured output."""
         try:
-            prompt = self._create_vqa_prompt(content, question_type)
+            # Create the VQA generation prompt  
+            prompt = self._create_vqa_prompt_v2(ocr_text)
             
-            response = litellm.completion(
+            # Encode image as base64
+            import base64
+            with open(image_path, 'rb') as f:
+                image_data = base64.b64encode(f.read()).decode('utf-8')
+            
+            # Create content with image and text
+            contents = [
+                {
+                    "parts": [
+                        {"text": prompt},
+                        {
+                            "inline_data": {
+                                "mime_type": "image/jpeg",
+                                "data": image_data
+                            }
+                        }
+                    ]
+                }
+            ]
+            
+            # Generate with structured output
+            response = self.gemini_client.models.generate_content(
                 model=self.llm_model,
-                messages=[
-                    {"role": "system", "content": "You are an expert at creating educational questions and answers."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=500,
-                temperature=0.7
+                contents=contents,
+                config={
+                    "response_mime_type": "application/json",
+                    "response_schema": list[VQAPair],
+                }
             )
             
-            cost = self.cost_tracker.track_usage(response, self.llm_model)
-            print(f"💰 VQA Generation: ${cost:.6f}")
+            # Use the parsed structured output
+            vqa_pairs: list[VQAPair] = response.parsed
+            print(f"✅ Generated {len(vqa_pairs)} VQA pairs with Gemini (structured output)")
             
-            result = response.choices[0].message.content.strip()
-            question, answer, negatives = self._parse_llm_response(result)
+            # Convert to dictionaries
+            result_pairs = []
+            for pair in vqa_pairs:
+                pair_dict = {
+                    "id": pair.id,
+                    "type": pair.type.value if hasattr(pair.type, 'value') else pair.type,
+                    "difficulty": pair.difficulty.value if hasattr(pair.difficulty, 'value') else pair.difficulty,
+                    "question": pair.question,
+                    "answer": pair.answer,
+                    "explanation": pair.explanation,
+                    "hard_negatives": pair.hard_negatives or [],
+                    "choices": pair.choices or []
+                }
+                result_pairs.append(pair_dict)
             
-            return question, answer, negatives
+            return result_pairs
             
         except Exception as e:
-            print(f"⚠️ LLM VQA generation failed: {e}")
-            return self._generate_template_vqa(content, question_type, 0)
+            print(f"⚠️ Gemini VQA generation failed: {e}")
+            return []
 
-    def _create_vqa_prompt(self, content: str, question_type: str) -> str:
-        """Create a prompt for LLM VQA generation."""
-        content_preview = content[:1000] + "..." if len(content) > 1000 else content
+
+
+    def _create_vqa_prompt_v2(self, ocr_text: str) -> str:
+        """Create VQA generation prompt for structured output."""
+        ocr_section = f"\n\n**Extracted Text from Document:**\n{ocr_text}\n" if ocr_text.strip() else ""
         
-        prompt = f"""
-Based on this document content:
-"{content_preview}"
+        prompt = f"""### Visual Question Answering (VQA) Pair Generation Task
 
-Generate a {question_type} question and answer pair, plus 3 hard negative answers.
+You are an expert Visual Question Answering (VQA) pair generator. Analyze the provided document image and create **exactly 5 high-quality VQA pairs**.{ocr_section}
 
-Requirements:
-- Question should be clear and specific
-- Answer should be accurate and based on the content
-- Hard negatives should be plausible but incorrect
-- Format as JSON: {{"question": "...", "answer": "...", "hard_negatives": ["...", "...", "..."]}}
+**Requirements:**
 
-Question type guidelines:
-- factual: Ask about specific facts or details
-- reasoning: Require inference or analysis  
-- comparative: Compare different elements or concepts
-"""
+Generate **5 VQA pairs** with this distribution:
+* **4 Descriptive questions** (type: "descriptive") - Open-ended questions with hard negative answers
+* **1 Multiple Choice question** (type: "mcq") - With 4 choices including 1 correct answer
+
+**Difficulty Distribution:**
+* At least 1 "easy" question (direct fact retrieval)
+* At least 1 "medium" question (minor reasoning required)  
+* At least 1 "hard" question (multi-step inference)
+
+**Guidelines:**
+1. **Questions must be answerable from the document content only**
+2. **For descriptive questions**: Provide 4 plausible but incorrect "hard_negatives"
+3. **For MCQ questions**: Provide 4 "choices" (1 correct + 3 distractors)
+4. **Hard negatives/distractors** should be based on document content but incorrect
+5. Use diverse question types: factual, reasoning, numerical, comparative, etc.
+
+**Question ID Format:** Use "vqa_1", "vqa_2", "vqa_3", "vqa_4", "vqa_5"
+
+Focus on the actual document content, text, data, and information rather than just visual appearance."""
+        
         return prompt
 
-    def _parse_llm_response(self, response: str) -> tuple:
-        """Parse LLM response to extract question, answer, and negatives."""
-        try:
-            # Try to parse JSON response
-            if "{" in response and "}" in response:
-                start = response.find("{")
-                end = response.rfind("}") + 1
-                json_str = response[start:end]
-                data = json.loads(json_str)
-                
-                return (
-                    data.get("question", "Generated question"),
-                    data.get("answer", "Generated answer"),
-                    data.get("hard_negatives", ["Negative 1", "Negative 2", "Negative 3"])
-                )
-        except Exception as e:
-            print(f"⚠️ Error parsing LLM response: {e}")
+
+
+    def _generate_template_vqa_pairs(self, content: str) -> List[Dict]:
+        """Generate exactly 5 VQA pairs using templates when LLM is not available."""
+        templates = {
+            "factual": {
+                "questions": [
+                    "What is the main topic discussed in this document?",
+                    "What are the key points mentioned?",
+                    "What specific details are provided?",
+                    "What information is presented in this document?",
+                    "What type of document is this?",
+                ],
+                "answers": [
+                    "The main topic is document processing and analysis.",
+                    "Key points include methodology and results.",
+                    "Specific technical details and measurements.",
+                    "The document presents comprehensive analysis and findings.",
+                    "This is a technical or research document.",
+                ]
+            },
+            "reasoning": {
+                "questions": [
+                    "Why is this approach effective?",
+                    "How do the different components work together?",
+                    "What can be inferred from the results?",
+                    "What conclusions can be drawn?",
+                    "How does this methodology address the problem?",
+                ],
+                "answers": [
+                    "This approach is effective because it combines multiple techniques.",
+                    "Components work together through systematic integration.",
+                    "Results suggest improved performance and reliability.",
+                    "The conclusions indicate successful implementation.",
+                    "The methodology provides a structured solution approach.",
+                ]
+            },
+            "comparative": {
+                "questions": [
+                    "How does this compare to alternative approaches?",
+                    "What are the advantages and disadvantages?",
+                    "Which method performs better?",
+                    "What differences are highlighted?",
+                    "How do these results compare to previous work?",
+                ],
+                "answers": [
+                    "This approach offers better accuracy than alternatives.",
+                    "Advantages include speed; disadvantages include complexity.",
+                    "The proposed method shows superior performance.",
+                    "Key differences include improved efficiency and effectiveness.",
+                    "Results show significant improvement over previous methods.",
+                ]
+            }
+        }
         
-        # Fallback parsing
-        lines = response.split('\n')
-        question = next((line for line in lines if '?' in line), "Generated question?")
-        answer = next((line for line in lines if 'answer' in line.lower() or 'Answer' in line), "Generated answer")
+        question_types = ["factual", "reasoning", "comparative", "factual", "reasoning"]  # 5 questions with distribution
+        difficulties = ["easy", "medium", "hard", "easy", "medium"]  # Varied difficulty
         
-        return question, answer, ["Hard negative 1", "Hard negative 2", "Hard negative 3"]
+        vqa_pairs = []
+        
+        for i in range(5):
+            question_type = question_types[i]
+            template = templates[question_type]
+            
+            # Use modulo to cycle through questions if we have fewer templates than needed
+            q_idx = i % len(template["questions"])
+            
+            question = template["questions"][q_idx]
+            answer = template["answers"][q_idx]
+            explanation = f"This is based on {question_type} analysis of the document content."
+            difficulty = difficulties[i]
+            
+            # Generate hard negatives
+            hard_negatives = [
+                f"Incorrect answer option A for question {i + 1}",
+                f"Incorrect answer option B for question {i + 1}",
+                f"Incorrect answer option C for question {i + 1}",
+                f"Incorrect answer option D for question {i + 1}"
+            ]
+            
+            vqa_pair = {
+                "question": question,
+                "answer": answer,
+                "explanation": explanation,
+                "hard_negatives": hard_negatives,
+                "question_type": question_type,
+                "difficulty": difficulty
+            }
+            vqa_pairs.append(vqa_pair)
+        
+        return vqa_pairs
 
     def _generate_template_vqa(self, content: str, question_type: str, idx: int) -> tuple:
-        """Generate VQA using templates when LLM is not available."""
+        """Generate VQA using templates when LLM is not available (legacy method for compatibility)."""
         templates = {
             "factual": {
                 "questions": [
@@ -314,6 +591,7 @@ Question type guidelines:
         
         question = template["questions"][q_idx]
         answer = template["answers"][q_idx]
+        explanation = f"This is based on {question_type} analysis of the document content."
         
         # Generate hard negatives
         hard_negatives = [
@@ -322,7 +600,7 @@ Question type guidelines:
             f"Incorrect answer option C for question {idx + 1}"
         ]
         
-        return question, answer, hard_negatives
+        return question, answer, explanation, hard_negatives
 
     def _assess_difficulty(self, question: str) -> str:
         """Assess question difficulty based on complexity indicators."""
@@ -340,9 +618,83 @@ Question type guidelines:
         
         return "medium"  # Default
 
+    def _save_vqa_results(self, results: List[Dict]) -> List[str]:
+        """Save VQA results with images folder and metadata.jsonl structure.
+        
+        Each result now contains multiple VQA pairs for a single image.
+        Save one image per result and create a single JSONL entry with all VQA pairs.
+        """
+        output_files = []
+        total_vqa_pairs = 0
+        
+        with open(self.metadata_file, "w", encoding="utf-8") as metadata_file:
+            for result in results:
+                # Copy image to dataset images folder (once per image)
+                original_img_path = result["image_path"]
+                filename = f"{result['id']}.png"
+                new_img_path = os.path.join(self.images_dir, filename)
+                
+                # Copy the image only once
+                shutil.copy2(original_img_path, new_img_path)
+                output_files.append(new_img_path)
+                
+                # Count VQA pairs for this image
+                num_pairs = result.get("num_vqa_pairs", len(result.get("vqa_pairs", [])))
+                total_vqa_pairs += num_pairs
+                
+                # Create metadata entry with all VQA pairs for this image
+                metadata_entry = {
+                    "file_name": filename,
+                    "image_path": f"images/{filename}",
+                    "id": result["id"],
+                    "vqa_pairs": result["vqa_pairs"],  # All 5 VQA pairs for this image
+                    "num_vqa_pairs": num_pairs,
+                    "source_text": result["source_text"],
+                    "detected_language": result["detected_language"],
+                    "ocr_confidence": result["ocr_confidence"],
+                    "source_file": result["image_path"],
+                    "processing_mode": result["metadata"]["processing_mode"],
+                    "generated_by": result["metadata"]["generated_by"]
+                }
+                
+                # Write to metadata.jsonl (one entry per image with all VQA pairs)
+                metadata_file.write(json.dumps(metadata_entry, ensure_ascii=False) + "\n")
+        
+        print(f"💾 Saved {len(results)} images with {total_vqa_pairs} total VQA pairs to:")
+        print(f"   - Images: {self.images_dir} ({len(results)} unique images)")
+        print(f"   - Metadata: {self.metadata_file} ({len(results)} entries, {total_vqa_pairs} VQA pairs)")
+        
+        return output_files
+
+
+
+    def _cleanup_temp_files(self):
+        """Clean up temporary PDF image files."""
+        try:
+            if self.temp_dir.exists():
+                shutil.rmtree(self.temp_dir)
+                print(f"🧹 Cleaned up temporary files")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not clean up temp files: {e}")
+
+    def _extract_document_content(self, doc_path: str) -> str:
+        """Extract text content from document."""
+        try:
+            if isinstance(doc_path, dict) and "content" in doc_path:
+                return doc_path["content"]
+            elif str(doc_path).endswith(('.txt', '.md')):
+                with open(doc_path, 'r', encoding='utf-8') as f:
+                    return f.read()
+            else:
+                # Use OCR for images
+                ocr_result = self._extract_text_with_ocr(str(doc_path))
+                return ocr_result.get('text', f"Sample document content for {doc_path}")
+        except Exception as e:
+            print(f"⚠️ Error extracting content from {doc_path}: {e}")
+            return f"Sample document content for {doc_path}"
+
     def _calculate_similarity_scores(self, correct_answer: str, hard_negatives: List[str]) -> List[float]:
         """Calculate similarity scores between correct answer and hard negatives."""
-        # Simplified similarity calculation based on word overlap
         def word_overlap_similarity(text1: str, text2: str) -> float:
             words1 = set(text1.lower().split())
             words2 = set(text2.lower().split())

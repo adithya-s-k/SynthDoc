@@ -16,22 +16,33 @@ from ...utils import CostTracker
 class RawDocumentGenerator(BaseWorkflow):
     """Generate synthetic documents from scratch using LLMs."""
 
-    def __init__(self, groq_api_key: Optional[str] = None, save_dir: str = "generated_docs"):
+    def __init__(self, groq_api_key: Optional[str] = None, save_dir: str = "raw_document_output"):
         super().__init__()
         self.save_dir = save_dir
+        self.workflow_name = "raw_document_generation"
         self._setup_save_directory()
         self._setup_apis(groq_api_key)
         self.base_prompt_template = "Write a comprehensive, well-structured document in {language} about"
         self.cost_tracker = CostTracker()
 
     def _setup_save_directory(self):
-        """Create save directory for generated documents."""
+        """Create save directory structure with images folder and metadata.jsonl directly in save_dir."""
         os.makedirs(self.save_dir, exist_ok=True)
+        
+        # Create images directory and metadata file directly in save_dir (same as other workflows)
         self.images_dir = os.path.join(self.save_dir, "images")
-        self.metadata_dir = os.path.join(self.save_dir, "metadata")
+        self.metadata_file = os.path.join(self.save_dir, "metadata.jsonl")
+        
         os.makedirs(self.images_dir, exist_ok=True)
-        os.makedirs(self.metadata_dir, exist_ok=True)
-        print(f"✅ Save directories created: {self.save_dir}")
+        
+        # Create metadata.jsonl if it doesn't exist
+        if not os.path.exists(self.metadata_file):
+            with open(self.metadata_file, 'w', encoding='utf-8') as f:
+                pass  # Create empty file
+        
+        print(f"✅ Save directory created: {self.save_dir}")
+        print(f"📂 Images will be saved to: {self.images_dir}")
+        print(f"📄 Metadata will be saved to: {self.metadata_file}")
 
     def _setup_apis(self, groq_api_key: Optional[str]):
         """Initialize API configurations."""
@@ -44,8 +55,6 @@ class RawDocumentGenerator(BaseWorkflow):
         litellm.num_retries = 3  # Built-in retry handling
         litellm.request_timeout = 120  # Longer timeout for document generation
         litellm.drop_params = True  # Auto-handle unsupported parameters
-        
-        #can add over here the huggingface upload functinality... 
 
     def _enhance_prompt(self, prompt: str, num_pages: int, language: Language) -> str:
         """Enhance prompt for better content generation."""
@@ -88,8 +97,6 @@ class RawDocumentGenerator(BaseWorkflow):
         except Exception as e:
             print(f"⚠️ Prompt enhancement failed: {e}")
             return f"{prompt} - Comprehensive analysis with technical depth and examples"
-
-    
 
     def _generate_content(self, config: RawDocumentGenerationConfig) -> str:
         """Generate text content using LLM with built-in retry."""
@@ -180,123 +187,28 @@ class RawDocumentGenerator(BaseWorkflow):
             page_height=1000
         )
         
-        # Convert metadata to expected format
-        layout_type = getattr(config, 'layout_type', 'SINGLE_COLUMN')
-        # Convert LayoutType enum to string if needed
-        if hasattr(layout_type, 'value'):
-            layout_type_str = layout_type.value
-        else:
-            layout_type_str = str(layout_type)
-
-        layout_info = {
-            "page_dimensions": {"width": 800, "height": 1000},
-            "margins": metadata.get('layout_info', {}).get('margin', 60),
-            "layout_type": layout_type_str,
-            "has_graphs": config.include_graphs,
-            "has_tables": config.include_tables,
-            "has_ai_images": config.include_ai_images,
-            "visual_elements": metadata.get('visual_elements', {}),
-            "word_coordinates": metadata.get('word_coords', []),
-            "content_height": metadata.get('content_height', 800),
-            "visual_elements_height": metadata.get('visual_elements_height', 0),
-            "page_metadata": metadata
-        }
-        
-        print(f"Generated advanced document page {page_num} with layout: {getattr(config, 'layout_type', 'SINGLE_COLUMN')}")
-        print(f"Visual elements: graphs={config.include_graphs}, tables={config.include_tables}, images={config.include_ai_images}")
-        
-        return img, layout_info
-        
-    def _save_document_data(self, doc_data: Dict[str, Any], page_num: int, pdf_name: str):
-        """Save document data incrementally."""
-        # Save image
-        img = doc_data['image']
-        img_filename = f"{pdf_name}_page_{page_num}.png"
-        img_path = os.path.join(self.images_dir, img_filename)
-        img.save(img_path)
-        
-        # Save metadata
-        metadata = {k: v for k, v in doc_data.items() if k != 'image'}
-        metadata['image_path'] = img_path
-        metadata_filename = f"{pdf_name}_page_{page_num}_metadata.json"
-        metadata_path = os.path.join(self.metadata_dir, metadata_filename)
-        
-        with open(metadata_path, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
-        
-        print(f"Saved: {img_filename} + metadata")
-        return img_path, metadata_path
-
-
-    def _create_document_data(self, text: str, config: RawDocumentGenerationConfig, 
-                             page_num: int, pdf_name: str) -> Dict[str, Any]:
-        """Create document data structure."""
-        img, layout_info = self._create_document_image(text, config, page_num)
-        
-        # Create required data structures
-        lines_data = [{"text": line, "bbox": [60, 60 + i*24, 740, 84 + i*24], 
-                      "confidence": 0.95} for i, line in enumerate(text.split('\n')[:30])]
-        
-        images_data = []
-        if config.include_graphs:
-            images_data.append({"type": "graph", "bbox": [200, 300, 600, 550], 
-                               "description": "Data visualization", "confidence": 0.95})
-        
-        tables_data = []
-        if config.include_tables:
-            tables_data.append({"type": "data_table", "bbox": [60, 400, 560, 550], 
-                               "rows": 5, "columns": 3, "confidence": 0.95})
-        
-        content_list = [{"id": i+1, "type": "text", "content": line, 
-                        "bbox": [60, 60 + i*24, 740, 84 + i*24]} 
-                       for i, line in enumerate(text.split('\n')[:20])]
-        
-        return {
-            'image': img,
-            'imagewidth': 800,
-            'pdf_name': pdf_name,
-            'page_number': page_num - 1,
-            'markdown': f"# Page {page_num}\n\n{text}",
-            'html': f"<h1>Page {page_num}</h1>\n<p>{text.replace(chr(10), '</p><p>')}</p>",
-            'layout': json.dumps(layout_info),
-            'lines': json.dumps(lines_data),
-            'images': json.dumps(images_data),
-            'tables': json.dumps(tables_data),
-            'equations': "[]",
-            'tables': str(tables_data),
-            'page_size': "800x1000",
-            'content_list': json.dumps(content_list),
-            'base_layout_detection': str({"page_layout": {"type": "single_column"}}),
-            'pdf_info': str({"filename": pdf_name, "page_count": config.num_pages}),
-            'system_prompt': "Generate high-quality synthetic documents for training ML models",
-            'response': text
-        }
+        return img, metadata
 
     def process(self, config: RawDocumentGenerationConfig) -> WorkflowResult:
         """Generate synthetic documents based on configuration."""
+        start_time = time.time()
+        
         print(f"🔄 Generating: {config.language.value}, {config.num_pages} pages")
         
         # Generate base content
         content = self._generate_content(config)
-        
 
         words = content.split()
         words_per_page = len(words) // config.num_pages if config.num_pages > 0 else len(words)
-
-        # Split content into pages
-        # sentences = content.split('. ')
-        # sentences_per_page = len(sentences) // config.num_pages if config.num_pages > 0 else len(sentences)
         
         lang_code = config.language.value if hasattr(config.language, 'value') else str(config.language)
-        pdf_name = f"document_{lang_code}_{random.randint(10000, 99999)}"
+        document_id = f"document_{lang_code}_{random.randint(10000, 99999)}"
+        
+        all_results = []
         
         for page_num in range(1, config.num_pages + 1):
-            # start_idx = (page_num - 1) * sentences_per_page
-            # end_idx = min(page_num * sentences_per_page, len(sentences))
             start_idx = (page_num - 1) * words_per_page
             end_idx = min(page_num * words_per_page, len(words))
-            page_text = " ".join(words[start_idx:end_idx])
-
 
             if start_idx < len(words):
                 page_text = ' '.join(words[start_idx:end_idx])
@@ -312,132 +224,183 @@ class RawDocumentGenerator(BaseWorkflow):
                 page_text = additional_content[:1000]
             
             page_text = f"Page {page_num}\n\n{page_text}"
-            doc_data = self._create_document_data(page_text, config, page_num, pdf_name)
             
-            # Save immediately after generation
-            self._save_document_data(doc_data, page_num, pdf_name)
-            #cleared the image from memory immediately
-            #say someone generated 100 images, it'll crash like crazy to load so much in RAM 
-            doc_data['image'].close()
-            del doc_data['image']
-            del doc_data
-        
-        cost_summary = self.cost_tracker.get_summary()
-        print(f"\nTotal Cost: ${cost_summary['total_cost']:.6f} | API Calls: {cost_summary['api_calls']}")
-        print(f"Tokens: {cost_summary['tokens_used']:,}")
-        
-        
-        #Save generation summary
-        
-        summary = {
-            "workflow_type": "raw_document_generation",
-            **cost_summary,
-            "num_samples": config.num_pages,
-            "config": {
-                "language": config.language.value,
-                "num_pages": config.num_pages,
-                "prompt": config.prompt,
-                "include_graphs": config.include_graphs,
-                "include_tables": config.include_tables,
-                "include_ai_images": config.include_ai_images,
-                "output_format": config.output_format.value if hasattr(config.output_format, 'value') else str(config.output_format)
-            },
-            "generated_files": [f"{pdf_name}_page_{i}.png" for i in range(1, config.num_pages + 1)]
-        }
-        
-        summary_path = os.path.join(self.save_dir, f"{pdf_name}_summary.json")
-        with open(summary_path, 'w', encoding='utf-8') as f:
-            json.dump(summary, f, indent=2, ensure_ascii=False)
-        print(f"📋 Summary saved: {summary_path}")
-        
-        #create dataset
-        dataset = self._load_dataset_from_files(pdf_name, config.num_pages)
+            # Create document image
+            img, layout_info = self._create_document_image(page_text, config, page_num)
+            
+            # Save image to images folder
+            filename = f"{document_id}_page_{page_num}.png"
+            img_path = os.path.join(self.images_dir, filename)
+            img.save(img_path)
+            
+            # Convert LayoutType enum to string if needed (for JSON serialization)
+            layout_type = getattr(config, 'layout_type', 'SINGLE_COLUMN')
+            layout_type_str = layout_type.value if hasattr(layout_type, 'value') else str(layout_type)
+            
+            # Create minimal metadata entry (following pattern from other workflows)
+            
+            metadata_entry = {
+                "file_name": filename,
+                "image_path": f"images/{filename}",
+                "id": f"{document_id}_page_{page_num}",
+                "document_id": document_id,
+                "page_number": page_num,
+                "language": config.language.value if hasattr(config.language, 'value') else str(config.language),
+                "prompt": config.prompt or "document generation",
+                "content_preview": page_text[:200] + "..." if len(page_text) > 200 else page_text,
+                "layout_type": layout_type_str,
+                "has_graphs": getattr(config, 'include_graphs', False),
+                "has_tables": getattr(config, 'include_tables', False),
+                "has_ai_images": getattr(config, 'include_ai_images', False),
+                "generated_by": "synthdoc_raw_document_generator"
+            }
+            
+            # Write to metadata.jsonl
+            with open(self.metadata_file, 'a', encoding='utf-8') as f:
+                json.dump(metadata_entry, f, ensure_ascii=False)
+                f.write('\n')
+            
+            # Create result for dataset
+            result = {
+                "image": img,
+                "file_name": filename,
+                "image_path": f"images/{filename}",
+                "id": f"{document_id}_page_{page_num}",
+                "document_id": document_id,
+                "page_number": page_num,
+                "language": config.language.value if hasattr(config.language, 'value') else str(config.language),
+                "prompt": config.prompt or "document generation",
+                "content_preview": page_text[:200] + "..." if len(page_text) > 200 else page_text,
+                "layout_type": layout_type_str,
+                "has_graphs": getattr(config, 'include_graphs', False),
+                "has_tables": getattr(config, 'include_tables', False),
+                "has_ai_images": getattr(config, 'include_ai_images', False),
+                "generated_by": "synthdoc_raw_document_generator"
+            }
+            
+            all_results.append(result)
+            print(f"Saved: {filename}")
 
-        #get cost summary
+        # Create HuggingFace dataset directly from results
+        if all_results:
+            dataset_dict = {
+                "image": [],
+                "file_name": [],
+                "image_path": [],
+                "id": [],
+                "document_id": [],
+                "page_number": [],
+                "language": [],
+                "prompt": [],
+                "content_preview": [],
+                "layout_type": [],
+                "has_graphs": [],
+                "has_tables": [],
+                "has_ai_images": [],
+                "generated_by": []
+            }
+            
+            for result in all_results:
+                for key in dataset_dict.keys():
+                    dataset_dict[key].append(result[key])
+            
+            dataset = Dataset.from_dict(dataset_dict)
+            
+            # Clear images from memory after dataset creation
+            for result in all_results:
+                if 'image' in result and result['image']:
+                    result['image'].close()
+        else:
+            dataset = Dataset.from_dict({})
+
         cost_summary = self.cost_tracker.get_summary()
+        processing_time = time.time() - start_time
+        
+        print(f"\n✅ Document generation completed: {len(all_results)} pages in {processing_time:.2f}s")
+        print(f"💰 Total Cost: ${cost_summary['total_cost']:.6f} | API Calls: {cost_summary['api_calls']}")
+        print(f"📊 Tokens: {cost_summary['tokens_used']:,}")
+        print(f"📁 Output structure: {self.save_dir}")
+        print(f"   - Images: {self.images_dir}")
+        print(f"   - Metadata: {self.metadata_file}")
         
         return WorkflowResult(
             dataset=dataset,
             metadata={
                 "workflow_type": "raw_document_generation",
-                 **cost_summary
-                
+                "document_id": document_id,
+                "total_pages": len(all_results),
+                "language": config.language.value if hasattr(config.language, 'value') else str(config.language),
+                "prompt": config.prompt,
+                "processing_time": processing_time,
+                **cost_summary,
+                "output_structure": {
+                    "output_dir": self.save_dir,
+                    "images_dir": self.images_dir,
+                    "metadata_file": self.metadata_file,
+                    "total_images": len(all_results)
+                },
+                "config": {
+                    "language": config.language.value if hasattr(config.language, 'value') else str(config.language),
+                    "num_pages": config.num_pages,
+                    "prompt": config.prompt,
+                    "include_graphs": getattr(config, 'include_graphs', False),
+                    "include_tables": getattr(config, 'include_tables', False),
+                    "include_ai_images": getattr(config, 'include_ai_images', False),
+                    "layout_type": layout_type_str
+                }
             },
-            num_samples=len(dataset),
+            num_samples=len(all_results),
+            output_files=[os.path.join(self.images_dir, result["file_name"]) for result in all_results]
         )
-    
-    def _load_dataset_from_files(self, pdf_name: str, num_pages: int) -> Dataset:
-        """Load dataset from saved files with comprehensive README schema."""
-        samples = []
+
+    @classmethod
+    def load_dataset_from_directory(cls, dataset_dir: str) -> Dataset:
+        """
+        Load a HuggingFace dataset from a directory containing images and metadata.jsonl.
         
-        for page_num in range(1, num_pages + 1):
-            metadata_path = os.path.join(self.metadata_dir, f"{pdf_name}_page_{page_num}_metadata.json")
-            if os.path.exists(metadata_path):
-                with open(metadata_path, 'r', encoding='utf-8') as f:
-                    sample = json.load(f)
-                
-                img_path = sample.get('image_path')
-                if img_path and os.path.exists(img_path):
-                    sample['image'] = Image.open(img_path)
-                
-                samples.append(sample)
-        
-        if not samples:
-            return Dataset.from_dict({})
+        Args:
+            dataset_dir: Path to the directory containing 'images/' folder and 'metadata.jsonl'
             
-        # Extract data for comprehensive dataset creation
-        images = [s['image'] for s in samples]
-        image_paths = [s['image_path'] for s in samples]
-        pdf_names = [s['pdf_name'] for s in samples]
-        page_numbers = [s['page_number'] for s in samples]
-        markdown_content = [s['markdown'] for s in samples]
-        html_content = [s['html'] for s in samples]
+        Returns:
+            Dataset: HuggingFace dataset with images and metadata
+        """
+        metadata_path = os.path.join(dataset_dir, "metadata.jsonl")
         
-        # Parse layout annotations from saved data
-        layout_annotations = []
-        line_annotations = []
-        embedded_images = []
-        equations = []
-        tables = []
-        content_lists = []
+        if not os.path.exists(metadata_path):
+            raise FileNotFoundError(f"metadata.jsonl not found in {dataset_dir}")
         
-        for s in samples:
-            # Convert string representations back to lists/dicts
-            try:
-                layout_data = json.loads(s.get('layout', '[]'))
-                lines_data = json.loads(s.get('lines', '[]'))
-                images_data = json.loads(s.get('images', '[]'))
-                equations_data = json.loads(s.get('equations', '[]'))
-                tables_data = json.loads(s.get('tables', '[]'))
-                content_data = json.loads(s.get('content_list', '[]'))
-            except:
-                layout_data = []
-                lines_data = []
-                images_data = []
-                equations_data = []
-                tables_data = []
-                content_data = []
-                
-            layout_annotations.append(layout_data)
-            line_annotations.append(lines_data)
-            embedded_images.append(images_data)
-            equations.append(equations_data)
-            tables.append(tables_data)
-            content_lists.append(content_data)
+        dataset_records = []
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    record = json.loads(line)
+                    # Load the image
+                    img_path = os.path.join(dataset_dir, record["image_path"])
+                    if os.path.exists(img_path):
+                        image = Image.open(img_path)
+                        record["image"] = image
+                        dataset_records.append(record)
         
-        # Create comprehensive dataset using the comprehensive method from base class
-        return self._create_comprehensive_hf_dataset(
-            images=images,
-            image_paths=image_paths,
-            pdf_names=pdf_names,
-            page_numbers=page_numbers,
-            markdown_content=markdown_content,
-            html_content=html_content,
-            layout_annotations=layout_annotations,
-            line_annotations=line_annotations,
-            embedded_images=embedded_images,
-            equations=equations,
-            tables=tables,
-            content_lists=content_lists,
-            additional_metadata={"workflow": "raw_document_generation"}
-        )
+        if not dataset_records:
+            return Dataset.from_dict({})
+        
+        # Create dataset from records
+        dataset_dict = {
+            "image": [r["image"] for r in dataset_records],
+            "file_name": [r["file_name"] for r in dataset_records],
+            "image_path": [r["image_path"] for r in dataset_records],
+            "id": [r["id"] for r in dataset_records],
+            "document_id": [r["document_id"] for r in dataset_records],
+            "page_number": [r["page_number"] for r in dataset_records],
+            "language": [r["language"] for r in dataset_records],
+            "prompt": [r["prompt"] for r in dataset_records],
+            "content_preview": [r["content_preview"] for r in dataset_records],
+            "layout_type": [r["layout_type"] for r in dataset_records],
+            "has_graphs": [r["has_graphs"] for r in dataset_records],
+            "has_tables": [r["has_tables"] for r in dataset_records],
+            "has_ai_images": [r["has_ai_images"] for r in dataset_records],
+            "generated_by": [r["generated_by"] for r in dataset_records]
+        }
+        
+        return Dataset.from_dict(dataset_dict)

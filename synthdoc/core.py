@@ -9,12 +9,9 @@ from pathlib import Path
 import logging
 
 from .languages import LanguageSupport, Language
-from .workflows import RawDocumentGenerator, LayoutAugmenter, VQAGenerator, HandwritingGenerator
-from .workflows.document_translator import DocumentTranslator
+from .workflows import RawDocumentGenerator, VQAGenerator, DocumentTranslator
 from .models import (
-    RawDocumentGenerationConfig, LayoutAugmentationConfig, 
-    VQAGenerationConfig, HandwritingGenerationConfig,
-    DocumentTranslationConfig, AugmentationType,
+    RawDocumentGenerationConfig, VQAGenerationConfig, DocumentTranslationConfig,
 )
 from .utils import setup_logging
 from .config import load_env_config, get_api_key, get_llm_model
@@ -48,7 +45,7 @@ class SynthDoc:
         Initialize SynthDoc with automatic .env loading.
 
         Args:
-            output_dir: Directory for output files (default from .env or ./output)
+            output_dir: Directory for output files (will prompt user if not provided)
             log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
             llm_model: Model name for LiteLLM (auto-detected from .env if None)
             api_key: API key for the model provider (auto-detected from .env if None)
@@ -68,11 +65,7 @@ class SynthDoc:
                 self.config = _SDC()
 
         # Set up output directory
-        if output_dir:
-            self.output_dir = Path(output_dir)
-        else:
-            self.output_dir = Path(self.config.default_output_dir)
-        self.output_dir.mkdir(exist_ok=True)
+        self.output_dir = self._setup_output_directory(output_dir)
 
         # Setup logging
         self.logger = setup_logging(log_level)
@@ -88,15 +81,13 @@ class SynthDoc:
         self.api_key = api_key
         self.llm_model = llm_model
 
-        # Initialize workflows with proper configuration
+        # Initialize workflows with unified output directory
         self.language_support = LanguageSupport()
-        self.raw_doc_generator = RawDocumentGenerator(api_key, str(self.output_dir / "raw_docs"))
+        self.raw_doc_generator = RawDocumentGenerator(api_key, str(self.output_dir))
         # Backwards-compatibility alias (tests & older code reference self.doc_generator)
         self.doc_generator = self.raw_doc_generator
-        self.layout_augmenter = LayoutAugmenter(str(self.output_dir / "layout"))
-        self.vqa_generator = VQAGenerator(api_key, llm_model)
-        self.handwriting_generator = HandwritingGenerator(str(self.output_dir / "handwriting"))
-        self.document_translator = DocumentTranslator(str(self.output_dir / "document_translation"))
+        self.vqa_generator = VQAGenerator(api_key, llm_model, str(self.output_dir))
+        self.document_translator = DocumentTranslator(str(self.output_dir))
 
         # Log initialization status
         if api_key:
@@ -104,6 +95,45 @@ class SynthDoc:
         else:
             self.logger.warning("SynthDoc initialized without API key - limited functionality")
             self.logger.info("Set API keys in .env file for full LLM features")
+
+    def _setup_output_directory(self, output_dir: Optional[Union[str, Path]]) -> Path:
+        """Set up output directory with user prompt if not provided."""
+        if output_dir:
+            # User provided output directory
+            output_path = Path(output_dir)
+        else:
+            # Ask user for output directory
+            print("\n📁 SynthDoc Output Directory Setup")
+            print("=" * 40)
+            
+            # Get default from config
+            default_dir = self.config.default_output_dir
+            
+            # Prompt user for output directory
+            user_input = input(f"Enter output directory (default: {default_dir}): ").strip()
+            
+            if user_input:
+                output_path = Path(user_input)
+            else:
+                output_path = Path(default_dir)
+        
+        # Create the main output directory
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Create simplified structure: images folder and metadata.jsonl
+        images_dir = output_path / "images"
+        images_dir.mkdir(exist_ok=True)
+        
+        # Create metadata.jsonl file if it doesn't exist
+        metadata_file = output_path / "metadata.jsonl"
+        if not metadata_file.exists():
+            metadata_file.touch()
+        
+        print(f"✅ Output directory created: {output_path}")
+        print(f"📂 Images will be saved to: {images_dir}")
+        print(f"📄 Metadata will be saved to: {metadata_file}")
+        
+        return output_path
 
     def generate_raw_docs(
         self,
@@ -141,202 +171,50 @@ class SynthDoc:
             }
             lang_enum = lang_mapping.get(language.lower(), Language.EN)
 
-        # Convert augmentation strings to enums if provided
-        aug_enums = None
-        if augmentations:
-            aug_enums = []
-            for aug in augmentations:
-                try:
-                    aug_enums.append(AugmentationType(aug.lower()))
-                except ValueError:
-                    # Ignore unknown augmentation types but warn
-                    self.logger.warning(f"Unknown augmentation type ignored: {aug}")
-
         # Create configuration
         config = RawDocumentGenerationConfig(
             language=lang_enum,
             num_pages=num_pages,
             prompt=prompt,
-            augmentations=aug_enums,
         )
 
         # Use workflow to generate documents
         result = self.raw_doc_generator.process(config)
         return result.dataset
 
-    def augment_layout(
-        self,
-        documents: Optional[Union[List[Dict[str, Any]], Dataset]] = None,
-        document_paths: Optional[List[Union[str, Path]]] = None,
-        languages: Optional[List[str]] = None,
-        fonts: Optional[List[str]] = None,
-        augmentations: Optional[List[str]] = None,
-        layout_templates: Optional[List[str]] = None,
-    ) -> Dataset:
-        """
-        Apply layout transformations to documents.
+    # Removed augment_layout method - LayoutAugmenter workflow not implemented
 
-        Args:
-            documents: Pre-generated documents (list or HuggingFace Dataset)
-            document_paths: Paths to existing documents
-            languages: Target languages
-            fonts: Font families to apply
-            augmentations: Visual augmentation techniques
-            layout_templates: Predefined layout templates
-
-        Returns:
-            HuggingFace Dataset with comprehensive layout annotations schema
-        """
-        self.logger.info("Starting layout augmentation")
-
-        # Convert languages to Language enums
-        lang_enums = []
-        if languages:
-            for lang in languages:
-                try:
-                    lang_enum = Language(lang.upper())
-                except ValueError:
-                    lang_mapping = {
-                        'en': Language.EN, 'hi': Language.HI, 'zh': Language.ZH,
-                        'es': Language.ES, 'fr': Language.FR, 'ar': Language.AR
-                    }
-                    lang_enum = lang_mapping.get(lang.lower(), Language.EN)
-                lang_enums.append(lang_enum)
-        else:
-            lang_enums = [Language.EN]
-
-        # Handle documents input - extract paths if it's a Dataset
-        doc_paths = document_paths or []
-        if documents is not None:
-            if isinstance(documents, Dataset):
-                # Extract image paths from dataset
-                for i, sample in enumerate(documents):
-                    if isinstance(sample, dict) and 'image' in sample and hasattr(sample['image'], 'save'):
-                        # Create temp path for the image
-                        temp_path = self.output_dir / "temp" / f"doc_{i}.png"
-                        temp_path.parent.mkdir(exist_ok=True)
-                        sample['image'].save(temp_path)
-                        doc_paths.append(str(temp_path))
-                    elif isinstance(sample, dict) and 'image_path' in sample:
-                        doc_paths.append(sample['image_path'])
-            else:
-                # Handle list of documents
-                for i, doc in enumerate(documents):
-                    if isinstance(doc, dict):
-                        if 'image_path' in doc:
-                            doc_paths.append(doc['image_path'])
-                        elif 'image' in doc and hasattr(doc['image'], 'save'):
-                            temp_path = self.output_dir / "temp" / f"doc_{i}.png"
-                            temp_path.parent.mkdir(exist_ok=True)
-                            doc['image'].save(temp_path)
-                            doc_paths.append(str(temp_path))
-
-        # Map augmentation strings to enums
-        aug_enums = None
-        if augmentations:
-            aug_enums = []
-            for aug in augmentations:
-                try:
-                    aug_enums.append(AugmentationType(aug.lower()))
-                except ValueError:
-                    self.logger.warning(f"Unknown augmentation type ignored: {aug}")
-
-        # Create configuration
-        config = LayoutAugmentationConfig(
-            documents=doc_paths,
-            languages=lang_enums,
-            fonts=fonts or ["Arial", "Times New Roman"],
-            augmentations=aug_enums,
-        )
-
-        # Use workflow to augment layouts
-        result = self.layout_augmenter.process(config)
-        return result.dataset
-
-    def augment_pdfs(
-        self,
-        corpus_paths: List[Union[str, Path]],
-        extraction_elements: Optional[List[str]] = None,
-        combination_strategy: str = "random",
-        output_layout_types: Optional[List[str]] = None,
-    ) -> Dataset:
-        """
-        Create new documents by recombining elements from existing documents.
-
-        Args:
-            corpus_paths: Paths to source documents
-            extraction_elements: Types of elements to extract
-            combination_strategy: Method for combining elements
-            output_layout_types: Target layout styles
-
-        Returns:
-            HuggingFace Dataset with comprehensive recombined document schema
-        """
-        self.logger.info("Starting PDF augmentation")
-
-        # Convert paths to Path objects
-        pdf_paths = [Path(p) for p in corpus_paths]
-        
-        # Import PDF augmenter if not already imported
-        from .workflows.pdf_augmenter.workflow import PDFAugmenter
-        from .models import PDFAugmentationConfig, AugmentationType
-        
-        # Create PDF augmenter
-        pdf_augmenter = PDFAugmenter(save_dir=str(self.output_dir / "pdf_augmentation"))
-        
-        # Map extraction elements to supported types
-        supported_elements = extraction_elements or ["text_blocks", "headers", "paragraphs"]
-        
-        # Map output layout types to augmentation types
-        aug_enums = []
-        if output_layout_types:
-            for layout_type in output_layout_types:
-                try:
-                    if layout_type.lower() in ["rotation", "scaling", "brightness", "noise"]:
-                        aug_enums.append(AugmentationType(layout_type.lower()))
-                except ValueError:
-                    self.logger.warning(f"Unknown augmentation type ignored: {layout_type}")
-        
-        # Create configuration
-        config = PDFAugmentationConfig(
-            pdf_files=pdf_paths,
-            extraction_elements=supported_elements,
-            combination_strategy=combination_strategy,
-            num_generated_docs=min(10, len(pdf_paths) * 2),  # Generate 2 docs per input by default
-            preserve_text=True,
-            augmentations=aug_enums
-        )
-
-        # Use workflow to augment PDFs
-        try:
-            result = pdf_augmenter.process(config)
-            self.logger.info(f"Successfully generated {result.num_samples} PDF-augmented documents")
-            return result.dataset
-        except Exception as e:
-            self.logger.error(f"PDF augmentation failed: {e}")
-            # Return fallback dataset with error information
-            from datasets import Dataset
-            return Dataset.from_dict({
-                'error': [str(e)],
-                'note': ['PDF augmentation failed - check PDF processing library installation'],
-                'fallback': [True]
-            })
+    # Removed augment_pdfs method - PDFAugmenter workflow not implemented
 
     def generate_vqa(
         self,
-        source_documents: Union[List[Dict[str, Any]], Dataset],
+        source_documents: Optional[Union[List[Dict[str, Any]], Dataset]] = None,
+        single_image: Optional[Union[str, Path]] = None,
+        image_folder: Optional[Union[str, Path]] = None,
+        pdf_file: Optional[Union[str, Path]] = None,
+        pdf_folder: Optional[Union[str, Path]] = None,
         question_types: Optional[List[str]] = None,
         difficulty_levels: Optional[List[str]] = None,
         hard_negative_ratio: float = 0.3,
+        num_questions_per_doc: int = 3,
+        processing_mode: str = "VLM",
+        llm_model: str = "gemini-2.5-flash",
     ) -> Dataset:
         """
-        Generate VQA datasets with hard negatives.
+        Generate VQA datasets with hard negatives using flexible input types.
 
         Args:
             source_documents: Documents to generate questions about (list or Dataset)
-            question_types: Types of questions to generate
+            single_image: Single image file for VQA generation
+            image_folder: Folder containing images for VQA generation
+            pdf_file: Single PDF file for VQA generation
+            pdf_folder: Folder containing PDFs for VQA generation
+            question_types: Types of questions to generate (factual, reasoning, counting, etc.)
             difficulty_levels: Question complexity levels
             hard_negative_ratio: Ratio of hard negative examples
+            num_questions_per_doc: Number of questions per document
+            processing_mode: 'VLM' for vision+text or 'LLM' for text-only
+            llm_model: LLM model to use (default: gemini-2.5-flash)
 
         Returns:
             HuggingFace Dataset with comprehensive VQA schema
@@ -345,114 +223,52 @@ class SynthDoc:
 
         # Extract document paths from various input formats
         doc_paths = []
-        if isinstance(source_documents, Dataset):
-            # Extract paths from HuggingFace Dataset
-            for i, sample in enumerate(source_documents):
-                if 'image' in sample and hasattr(sample['image'], 'save'):
-                    temp_path = self.output_dir / "temp" / f"vqa_doc_{i}.png"
-                    temp_path.parent.mkdir(exist_ok=True)
-                    sample['image'].save(temp_path)
-                    doc_paths.append(str(temp_path))
-                elif 'image_path' in sample:
-                    doc_paths.append(sample['image_path'])
-        else:
-            # Handle list of documents
-            for i, doc in enumerate(source_documents):
-                if 'image_path' in doc:
-                    doc_paths.append(doc['image_path'])
-                elif 'image' in doc and hasattr(doc['image'], 'save'):
-                    temp_path = self.output_dir / "temp" / f"vqa_doc_{i}.png"
-                    temp_path.parent.mkdir(exist_ok=True)
-                    doc['image'].save(temp_path)
-                    doc_paths.append(str(temp_path))
+        
+        # Handle source_documents input (for compatibility)
+        if source_documents is not None:
+            if isinstance(source_documents, Dataset):
+                # Extract paths from HuggingFace Dataset
+                for i, sample in enumerate(source_documents):
+                    if 'image' in sample and hasattr(sample['image'], 'save'):
+                        temp_path = self.output_dir / "temp" / f"vqa_doc_{i}.png"
+                        temp_path.parent.mkdir(exist_ok=True)
+                        sample['image'].save(temp_path)
+                        doc_paths.append(str(temp_path))
+                    elif 'image_path' in sample:
+                        doc_paths.append(sample['image_path'])
+            else:
+                # Handle list of documents
+                for i, doc in enumerate(source_documents):
+                    if 'image_path' in doc:
+                        doc_paths.append(doc['image_path'])
+                    elif 'image' in doc and hasattr(doc['image'], 'save'):
+                        temp_path = self.output_dir / "temp" / f"vqa_doc_{i}.png"
+                        temp_path.parent.mkdir(exist_ok=True)
+                        doc['image'].save(temp_path)
+                        doc_paths.append(str(temp_path))
 
         # Create configuration
         config = VQAGenerationConfig(
             documents=doc_paths,
-            question_types=question_types or ["factual", "reasoning", "comparative"],
-            include_hard_negatives=hard_negative_ratio > 0,
-            num_questions_per_doc=5,  # Default from README
+            single_image=single_image,
+            image_folder=image_folder,
+            pdf_file=pdf_file,
+            pdf_folder=pdf_folder,
+            question_types=question_types or ["factual", "reasoning", "comparative", "counting", "spatial", "descriptive"],
             difficulty_levels=difficulty_levels,
+            include_hard_negatives=hard_negative_ratio > 0,
+            num_questions_per_doc=num_questions_per_doc,
+            processing_mode=processing_mode,
+            llm_model=llm_model,
         )
 
         # Use workflow to generate VQA
         result = self.vqa_generator.process(config)
         return result.dataset
 
-    def generate_handwriting(
-        self,
-        content: Optional[str] = None,
-        language: str = "en",
-        handwriting_template: Optional[str] = None,
-        writing_style: str = "print",
-        paper_template: str = "blank",
-    ) -> Dataset:
-        """
-        Generate handwritten documents.
-
-        Args:
-            content: Text content to render
-            language: Target language
-            handwriting_template: Handwriting style template
-            writing_style: cursive, print, or mixed
-            paper_template: Background paper style (lined, grid, blank)
-
-        Returns:
-            HuggingFace Dataset with comprehensive handwriting schema
-        """
-        self.logger.info("Generating handwriting documents")
-        
-        # Convert string language to Language enum
-        try:
-            lang_enum = Language(language.upper())
-        except ValueError:
-            lang_mapping = {
-                'en': Language.EN, 'hi': Language.HI, 'zh': Language.ZH,
-                'es': Language.ES, 'fr': Language.FR, 'ar': Language.AR
-            }
-            lang_enum = lang_mapping.get(language.lower(), Language.EN)
-
-        # Create configuration
-        config = HandwritingGenerationConfig(
-            text_content=content or "Sample handwriting text for document generation.",
-            language=lang_enum,
-            handwriting_style=writing_style,
-            paper_template=paper_template,
-            num_samples=1  # Default to 1 sample
-        )
-
-        # Use workflow to generate handwriting
-        result = self.handwriting_generator.process(config)
-        return result.dataset
+    # Removed generate_handwriting method - HandwritingGenerator workflow not implemented
     
-    def create_handwriting(
-        self,
-        content: Optional[str] = None,
-        language: str = "en",
-        handwriting_template: Optional[str] = None,
-        writing_style: str = "print",
-        paper_template: str = "blank",
-    ) -> Dataset:
-        """
-        Generate handwritten documents (alias for generate_handwriting).
-
-        Args:
-            content: Text content to render
-            language: Target language
-            handwriting_template: Handwriting style template
-            writing_style: cursive, print, or mixed
-            paper_template: Background paper style (lined, grid, blank)
-
-        Returns:
-            HuggingFace Dataset with comprehensive handwriting schema
-        """
-        return self.generate_handwriting(
-            content=content,
-            language=language,
-            handwriting_template=handwriting_template,
-            writing_style=writing_style,
-            paper_template=paper_template
-        )
+    # Removed create_handwriting method - HandwritingGenerator workflow not implemented
 
     def get_supported_languages(self) -> List[str]:
         """Get list of supported language codes."""

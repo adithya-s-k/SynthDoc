@@ -10,11 +10,8 @@ from typing import List
 # Import the new workflow-based architecture
 from .models import (
     RawDocumentGenerationConfig,
-    LayoutAugmentationConfig,
-    PDFAugmentationConfig,
     VQAGenerationConfig,
-    HandwritingGenerationConfig,
-    AugmentationType,
+    DocumentTranslationConfig,
     LayoutType,
     OutputFormat,
     WorkflowResult,
@@ -23,10 +20,8 @@ from .models import (
 from .workflows import (
     BaseWorkflow,
     RawDocumentGenerator,
-    LayoutAugmenter,
-    PDFAugmenter,
     VQAGenerator,
-    HandwritingGenerator,
+    DocumentTranslator,
 )
 
 # Import backward compatibility classes
@@ -48,11 +43,8 @@ __all__ = [
     
     # New workflow architecture
     "RawDocumentGenerationConfig",
-    "LayoutAugmentationConfig",
-    "PDFAugmentationConfig", 
     "VQAGenerationConfig",
-    "HandwritingGenerationConfig",
-    "AugmentationType",
+    "DocumentTranslationConfig",
     "LayoutType",
     "OutputFormat",
     "WorkflowResult",
@@ -60,10 +52,8 @@ __all__ = [
     # Workflows
     "BaseWorkflow",
     "RawDocumentGenerator",
-    "LayoutAugmenter",
-    "PDFAugmenter",
-    "VQAGenerator",
-    "HandwritingGenerator",
+    "VQAGenerator", 
+    "DocumentTranslator",
     
     # Utilities
     "setup_logging",
@@ -174,75 +164,38 @@ def create_vqa_dataset(
     return generator.process(config)
 
 
-def create_handwriting_samples(
-    text_content: str = None,
-    language: Language = Language.EN,
-    handwriting_style: str = "default",
-    paper_template: str = "lined",
-    num_samples: int = 1,
-    save_dir: str = "handwriting_output"
+def translate_documents(
+    input_images: List[str],
+    target_languages: List[str] = ["hi"],
+    yolo_model_path: str = "./model-doclayout-yolo.pt",
+    font_path: str = "./synthdoc/fonts/",
+    save_dir: str = "translated_docs"
 ) -> WorkflowResult:
     """
-    Convenience function to create handwriting samples.
+    Convenience function to translate documents.
     
     Args:
-        text_content: Text content to render as handwriting
-        language: Target language
-        handwriting_style: Style of handwriting ("default", "cursive", "print")
-        paper_template: Paper background style ("lined", "grid", "blank")
-        num_samples: Number of samples to generate
-        save_dir: Directory to save handwriting samples
+        input_images: List of image paths to translate
+        target_languages: Target languages for translation
+        yolo_model_path: Path to YOLO model for layout detection
+        font_path: Path to fonts directory
+        save_dir: Directory to save translated documents
         
     Returns:
-        WorkflowResult with handwriting samples
+        WorkflowResult with translated documents
     """
     # Create workflow
-    generator = HandwritingGenerator(save_dir=save_dir)
+    translator = DocumentTranslator(save_dir=save_dir)
     
     # Create configuration
-    config = HandwritingGenerationConfig(
-        text_content=text_content,
-        language=language,
-        handwriting_style=handwriting_style,
-        paper_template=paper_template,
-        num_samples=num_samples
+    config = DocumentTranslationConfig(
+        input_images=input_images,
+        target_languages=target_languages,
+        yolo_model_path=yolo_model_path,
+        font_path=font_path
     )
     
-    return generator.process(config)
-
-
-def augment_layouts(
-    documents: List[str],
-    languages: List[Language] = None,
-    fonts: List[str] = None,
-    augmentations: List[AugmentationType] = None,
-    save_dir: str = "layout_output"
-) -> WorkflowResult:
-    """
-    Convenience function to create layout variations.
-    
-    Args:
-        documents: List of document paths or content
-        languages: Target languages for content
-        fonts: Font families to apply
-        augmentations: Visual augmentations to apply
-        save_dir: Directory to save layout variations
-        
-    Returns:
-        WorkflowResult with layout variations
-    """
-    # Create workflow
-    augmenter = LayoutAugmenter(save_dir=save_dir)
-    
-    # Create configuration
-    config = LayoutAugmentationConfig(
-        documents=documents,
-        languages=languages or [Language.EN],
-        fonts=fonts,
-        augmentations=augmentations
-    )
-    
-    return augmenter.process(config)
+    return translator.process(config)
 
 
 # Quick examples for new users
@@ -269,23 +222,6 @@ def quick_example():
         
         # Example 2: New workflow architecture 
         print("\n📄 Example 2: Workflow functions with .env auto-loading")
-        
-        # Create handwriting samples (no API key needed)
-        print("🖋️  Creating handwriting samples...")
-        handwriting_result = create_handwriting_samples(
-            text_content="Hello, this is a handwriting sample!",
-            handwriting_style="cursive",
-            num_samples=2
-        )
-        print(f"✅ Generated {handwriting_result.num_samples} handwriting samples")
-        
-        # Create layout variations (no API key needed)
-        print("📄 Creating layout variations...")
-        layout_result = augment_layouts(
-            documents=["Sample document content for layout testing"],
-            fonts=["Arial", "Times New Roman"]
-        )
-        print(f"✅ Generated {layout_result.num_samples} layout variations")
         
         # Try LLM-powered features if API key available
         print("\n🤖 Testing LLM-powered features...")
@@ -335,7 +271,7 @@ def check_environment():
 
 
 # Add to exports
-__all__.extend(["check_environment"])
+__all__.extend(["check_environment", "translate_documents"])
 
 
 if __name__ == "__main__":

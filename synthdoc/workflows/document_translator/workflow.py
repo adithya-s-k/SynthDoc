@@ -576,7 +576,23 @@ class DocumentTranslator(BaseWorkflow):
         self.save_dir = save_dir
         self.workflow_name = "document_translation"
         self.logger = logging.getLogger(__name__)
-        os.makedirs(save_dir, exist_ok=True)
+        self._setup_save_directory()
+
+    def _setup_save_directory(self):
+        """Create save directory for document translation with simplified structure."""
+        os.makedirs(self.save_dir, exist_ok=True)
+        self.images_dir = os.path.join(self.save_dir, "images")
+        self.metadata_file = os.path.join(self.save_dir, "metadata.jsonl")
+        os.makedirs(self.images_dir, exist_ok=True)
+        
+        # Create metadata.jsonl if it doesn't exist
+        if not os.path.exists(self.metadata_file):
+            with open(self.metadata_file, 'w', encoding='utf-8') as f:
+                pass  # Create empty file
+        
+        print(f"✅ Save directory created: {self.save_dir}")
+        print(f"📂 Images will be saved to: {self.images_dir}")
+        print(f"📄 Metadata will be saved to: {self.metadata_file}")
     
     def process(self, config: DocumentTranslationConfig) -> WorkflowResult:
         """
@@ -667,14 +683,14 @@ class DocumentTranslator(BaseWorkflow):
                     if "translated_image" not in data:
                         continue
                         
-                    # Decode and save translated image
+                    # Decode and save translated image directly to images folder
                     img_base64 = data["translated_image"]
                     img_bytes = base64.b64decode(img_base64)
                     np_arr = np.frombuffer(img_bytes, np.uint8)
                     img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
                     
                     output_filename = f"translated_{lang}_{idx}_{Path(image_path).stem}.jpg"
-                    output_path = os.path.join(self.save_dir, output_filename)
+                    output_path = os.path.join(self.images_dir, output_filename)
                     cv2.imwrite(output_path, img)
                     
                     # Create result record
@@ -685,7 +701,7 @@ class DocumentTranslator(BaseWorkflow):
                         "target_language": lang,
                         "font_used": data.get("font_used", "default"),
                         "num_regions": len(data.get("regions", [])),
-                        "regions_data": json.dumps(data.get("regions", [])),
+                        "regions_data": json.dumps(data.get("regions", []), ensure_ascii=False),
                         "source_type": "pdf" if str(image_path).find("temp_pdf_images") != -1 else "image"
                     }
                     
@@ -700,25 +716,15 @@ class DocumentTranslator(BaseWorkflow):
                 self.logger.error(f"❌ Failed to process {image_path}: {e}")
                 continue
         
-        # Step 5: Create HuggingFace dataset structure
-        dataset_dir = os.path.join(self.save_dir, "dataset")
-        images_dir = os.path.join(dataset_dir, "images")
-        os.makedirs(images_dir, exist_ok=True)
-        
-        # Create metadata.jsonl file
-        metadata_path = os.path.join(dataset_dir, "metadata.jsonl")
+        # Step 5: Use unified output structure (no separate dataset folder)
         output_files = []
         
-        with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+        with open(self.metadata_file, "a", encoding="utf-8") as metadata_file:
             for result in all_results:
-                # Copy image to dataset images folder
-                original_img_path = result["translated_image_path"]
-                filename = os.path.basename(original_img_path)
-                new_img_path = os.path.join(images_dir, filename)
-                
-                # Copy the image
-                shutil.copy2(original_img_path, new_img_path)
-                output_files.append(new_img_path)
+                # Images are already saved directly to images folder
+                img_path = result["translated_image_path"]
+                filename = os.path.basename(img_path)
+                output_files.append(img_path)
                 
                 # Create metadata entry
                 metadata_entry = {
@@ -736,30 +742,7 @@ class DocumentTranslator(BaseWorkflow):
                 # Write to metadata.jsonl
                 metadata_file.write(json.dumps(metadata_entry, ensure_ascii=False) + "\n")
         
-        # Step 6: Save JSON output for each language (legacy format)
-        for lang in config.target_languages:
-            lang_results = [r for r in all_results if r["target_language"] == lang]
-            if lang_results:
-                json_path = os.path.join(self.save_dir, f"translations_{lang}.json")
-                json_data = {
-                    "language": lang,
-                    "total_images": len(lang_results),
-                    "results": [
-                        {
-                            "image_id": r["id"],
-                            "original_path": r["original_image_path"],
-                            "translated_path": r["translated_image_path"],
-                            "font_used": r["font_used"],
-                            "regions": json.loads(r["regions_data"])
-                        }
-                        for r in lang_results
-                    ]
-                }
-                with open(json_path, "w", encoding="utf-8") as f:
-                    json.dump(json_data, f, ensure_ascii=False, indent=2)
-                self.logger.info(f"💾 Saved JSON output for {lang} to {json_path}")
-        
-        # Step 7: Create HuggingFace dataset directly from results
+                # Step 6: Create HuggingFace dataset directly from results
         if all_results:
             # Create dataset dict directly from results
             dataset_dict = {
@@ -778,10 +761,10 @@ class DocumentTranslator(BaseWorkflow):
             # Add each result to the dataset
             for result in all_results:
                 filename = os.path.basename(result["translated_image_path"])
-                new_img_path = os.path.join(images_dir, filename)
+                img_path = result["translated_image_path"]  # Already in images folder
                 
                 # Load the image for the dataset
-                image = Image.open(new_img_path)
+                image = Image.open(img_path)
                 
                 dataset_dict["image"].append(image)
                 dataset_dict["file_name"].append(filename)
@@ -796,9 +779,9 @@ class DocumentTranslator(BaseWorkflow):
             
             dataset = Dataset.from_dict(dataset_dict)
             self.logger.info(f"📦 Created HuggingFace dataset with {len(dataset)} samples")
-            self.logger.info(f"📁 Dataset structure: {dataset_dir}")
-            self.logger.info(f"   - Images: {images_dir}")
-            self.logger.info(f"   - Metadata: {metadata_path}")
+            self.logger.info(f"📁 Unified output structure: {self.save_dir}")
+            self.logger.info(f"   - Images: {self.images_dir}")
+            self.logger.info(f"   - Metadata: {self.metadata_file}")
             
         else:
             dataset = Dataset.from_dict({})
@@ -828,10 +811,10 @@ class DocumentTranslator(BaseWorkflow):
                 "yolo_model": config.yolo_model_path,
                 "font_path": config.font_path,
                 "processing_time": processing_time,
-                "dataset_structure": {
-                    "dataset_dir": dataset_dir if all_results else None,
-                    "images_dir": images_dir if all_results else None,
-                    "metadata_file": metadata_path if all_results else None,
+                "output_structure": {
+                    "output_dir": self.save_dir,
+                    "images_dir": self.images_dir,
+                    "metadata_file": self.metadata_file,
                     "total_images": len(output_files)
                 },
                 "generated_files": [os.path.basename(f) for f in output_files]
