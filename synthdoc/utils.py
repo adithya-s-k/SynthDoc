@@ -9,6 +9,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+import litellm
 
 
 def setup_logging(level: str = "INFO") -> logging.Logger:
@@ -187,3 +188,85 @@ def merge_configs(
             merged[key] = value
 
     return merged
+
+
+class CostTracker:
+    """Track API usage costs for LLM operations."""
+    
+    def __init__(self):
+        self.total_cost = 0.0
+        self.api_calls_count = 0
+        self.token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    
+    def get_dynamic_pricing(self, model: str) -> Dict[str, float]:
+        """Get dynamic pricing from LiteLLM."""
+        try:
+            # This would get actual pricing from LiteLLM
+            # For now, using estimated pricing
+            pricing_map = {
+                # OpenAI Models (per 1K tokens)
+                "gpt-4o": {"input": 0.0025, "output": 0.010},
+                "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
+                "gpt-4-turbo": {"input": 0.010, "output": 0.030},
+                "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},  # Legacy
+                
+                # Claude Models (per 1K tokens)
+                "claude-3-5-sonnet": {"input": 0.003, "output": 0.015},
+                "claude-3-5-sonnet-20241022": {"input": 0.003, "output": 0.015},
+                "claude-3-haiku": {"input": 0.00025, "output": 0.00125},
+                "claude-3-opus": {"input": 0.015, "output": 0.075},
+                
+                # Groq Models (free tier)
+                "groq/llama-3.1": {"input": 0.0, "output": 0.0},
+                "groq/llama3-8b-8192": {"input": 0.0, "output": 0.0},  # Legacy
+                "groq/llama-3-8b-8192": {"input": 0.0, "output": 0.0},  # Legacy
+            }
+            
+            for key in pricing_map:
+                if key in model.lower():
+                    return pricing_map[key]
+            
+            # Default pricing
+            return {"input": 0.001, "output": 0.002}
+            
+        except Exception:
+            return {"input": 0.001, "output": 0.002}
+    
+    def track_usage(self, response, model: str = "gpt-4o-mini") -> float:
+        """Track usage from LiteLLM response and return cost."""
+        try:
+            # Extract token usage from response
+            usage = getattr(response, 'usage', None)
+            if usage:
+                prompt_tokens = getattr(usage, 'prompt_tokens', 0)
+                completion_tokens = getattr(usage, 'completion_tokens', 0)
+                total_tokens = getattr(usage, 'total_tokens', 0)
+                
+                # Update token usage
+                self.token_usage["prompt_tokens"] += prompt_tokens
+                self.token_usage["completion_tokens"] += completion_tokens
+                self.token_usage["total_tokens"] += total_tokens
+                
+                # Calculate cost
+                pricing = self.get_dynamic_pricing(model)
+                cost = (prompt_tokens * pricing["input"] / 1000) + (completion_tokens * pricing["output"] / 1000)
+                
+                self.total_cost += cost
+                self.api_calls_count += 1
+                
+                return cost
+            
+        except Exception as e:
+            print(f"⚠️ Error tracking usage: {e}")
+        
+        return 0.0
+    
+    def get_summary(self) -> Dict[str, Any]:
+        """Get cost tracking summary."""
+        return {
+            "total_cost": round(self.total_cost, 6),
+            "api_calls": self.api_calls_count,
+            "token_usage": self.token_usage,
+            "tokens_used": self.token_usage["total_tokens"],  # Add backward compatibility
+            "average_cost_per_call": round(self.total_cost / max(1, self.api_calls_count), 6)
+        }

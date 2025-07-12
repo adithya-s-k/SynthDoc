@@ -1,15 +1,17 @@
-from .raw_document_generator import RawDocumentGenerator
-from .layout_augmenter import LayoutAugmenter
-from .pdf_augmenter import PDFAugmenter
-from .vqa_generator import VQAGenerator
-from .handwriting_generator import HandwritingGenerator
 from .base import BaseWorkflow
+from .raw_document_generator import RawDocumentGenerator
+from .vqa_generator import VQAGenerator
+from .layout_augmenter import LayoutAugmenter
+from .handwriting_generator import HandwritingGenerator
+from .pdf_augmenter import PDFAugmenter
+from .document_translator import DocumentTranslator
 
 __all__ = [
     "BaseWorkflow",
-    "RawDocumentGenerator",
-    "LayoutAugmenter",
-    "PDFAugmenter",
+    "RawDocumentGenerator", 
     "VQAGenerator",
+    "LayoutAugmenter",
     "HandwritingGenerator",
-]
+    "PDFAugmenter",
+    "DocumentTranslator",
+] 
