@@ -192,3 +192,10 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Pre-trained model files (auto-downloaded)
+*.pt
+*.pth
+model-*.pt
+synthdoc/downloaded_models/
+downloaded_models/cache/

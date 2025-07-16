@@ -6,12 +6,14 @@ This module provides the main SynthDoc class that orchestrates all document gene
 
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
-import logging
 
+from .models_manager import ensure_model
 from .languages import LanguageSupport, Language
 from .workflows import RawDocumentGenerator, VQAGenerator, DocumentTranslator
 from .models import (
-    RawDocumentGenerationConfig, VQAGenerationConfig, DocumentTranslationConfig,
+    RawDocumentGenerationConfig,
+    VQAGenerationConfig,
+    DocumentTranslationConfig,
 )
 from .utils import setup_logging
 from .config import load_env_config, get_api_key, get_llm_model
@@ -62,6 +64,7 @@ class SynthDoc:
                 self.config = load_env_config(env_file)
             else:
                 from .config import SynthDocConfig as _SDC
+
                 self.config = _SDC()
 
         # Set up output directory
@@ -73,10 +76,10 @@ class SynthDoc:
         # Determine API key and model
         if api_key is None:
             api_key = get_api_key("auto")
-        
+
         if llm_model is None:
             llm_model = get_llm_model("auto")
-        
+
         # Store for later use
         self.api_key = api_key
         self.llm_model = llm_model
@@ -91,10 +94,17 @@ class SynthDoc:
 
         # Log initialization status
         if api_key:
-            self.logger.info(f"SynthDoc initialized successfully with model: {llm_model}")
+            self.logger.info(
+                f"SynthDoc initialized successfully with model: {llm_model}"
+            )
         else:
-            self.logger.warning("SynthDoc initialized without API key - limited functionality")
+            self.logger.warning(
+                "SynthDoc initialized without API key - limited functionality"
+            )
             self.logger.info("Set API keys in .env file for full LLM features")
+
+        # Check model status
+        self._check_model_status()
 
     def _setup_output_directory(self, output_dir: Optional[Union[str, Path]]) -> Path:
         """Set up output directory with user prompt if not provided."""
@@ -105,34 +115,36 @@ class SynthDoc:
             # Ask user for output directory
             print("\n📁 SynthDoc Output Directory Setup")
             print("=" * 40)
-            
+
             # Get default from config
             default_dir = self.config.default_output_dir
-            
+
             # Prompt user for output directory
-            user_input = input(f"Enter output directory (default: {default_dir}): ").strip()
-            
+            user_input = input(
+                f"Enter output directory (default: {default_dir}): "
+            ).strip()
+
             if user_input:
                 output_path = Path(user_input)
             else:
                 output_path = Path(default_dir)
-        
+
         # Create the main output directory
         output_path.mkdir(parents=True, exist_ok=True)
-        
+
         # Create simplified structure: images folder and metadata.jsonl
         images_dir = output_path / "images"
         images_dir.mkdir(exist_ok=True)
-        
+
         # Create metadata.jsonl file if it doesn't exist
         metadata_file = output_path / "metadata.jsonl"
         if not metadata_file.exists():
             metadata_file.touch()
-        
+
         print(f"✅ Output directory created: {output_path}")
         print(f"📂 Images will be saved to: {images_dir}")
         print(f"📄 Metadata will be saved to: {metadata_file}")
-        
+
         return output_path
 
     def generate_raw_docs(
@@ -166,8 +178,12 @@ class SynthDoc:
         except ValueError:
             # Fallback for common language codes
             lang_mapping = {
-                'en': Language.EN, 'hi': Language.HI, 'zh': Language.ZH,
-                'es': Language.ES, 'fr': Language.FR, 'ar': Language.AR
+                "en": Language.EN,
+                "hi": Language.HI,
+                "zh": Language.ZH,
+                "es": Language.ES,
+                "fr": Language.FR,
+                "ar": Language.AR,
             }
             lang_enum = lang_mapping.get(language.lower(), Language.EN)
 
@@ -223,28 +239,28 @@ class SynthDoc:
 
         # Extract document paths from various input formats
         doc_paths = []
-        
+
         # Handle source_documents input (for compatibility)
         if source_documents is not None:
             if isinstance(source_documents, Dataset):
                 # Extract paths from HuggingFace Dataset
                 for i, sample in enumerate(source_documents):
-                    if 'image' in sample and hasattr(sample['image'], 'save'):
+                    if "image" in sample and hasattr(sample["image"], "save"):
                         temp_path = self.output_dir / "temp" / f"vqa_doc_{i}.png"
                         temp_path.parent.mkdir(exist_ok=True)
-                        sample['image'].save(temp_path)
+                        sample["image"].save(temp_path)
                         doc_paths.append(str(temp_path))
-                    elif 'image_path' in sample:
-                        doc_paths.append(sample['image_path'])
+                    elif "image_path" in sample:
+                        doc_paths.append(sample["image_path"])
             else:
                 # Handle list of documents
                 for i, doc in enumerate(source_documents):
-                    if 'image_path' in doc:
-                        doc_paths.append(doc['image_path'])
-                    elif 'image' in doc and hasattr(doc['image'], 'save'):
+                    if "image_path" in doc:
+                        doc_paths.append(doc["image_path"])
+                    elif "image" in doc and hasattr(doc["image"], "save"):
                         temp_path = self.output_dir / "temp" / f"vqa_doc_{i}.png"
                         temp_path.parent.mkdir(exist_ok=True)
-                        doc['image'].save(temp_path)
+                        doc["image"].save(temp_path)
                         doc_paths.append(str(temp_path))
 
         # Create configuration
@@ -254,7 +270,15 @@ class SynthDoc:
             image_folder=image_folder,
             pdf_file=pdf_file,
             pdf_folder=pdf_folder,
-            question_types=question_types or ["factual", "reasoning", "comparative", "counting", "spatial", "descriptive"],
+            question_types=question_types
+            or [
+                "factual",
+                "reasoning",
+                "comparative",
+                "counting",
+                "spatial",
+                "descriptive",
+            ],
             difficulty_levels=difficulty_levels,
             include_hard_negatives=hard_negative_ratio > 0,
             num_questions_per_doc=num_questions_per_doc,
@@ -267,7 +291,7 @@ class SynthDoc:
         return result.dataset
 
     # Removed generate_handwriting method - HandwritingGenerator workflow not implemented
-    
+
     # Removed create_handwriting method - HandwritingGenerator workflow not implemented
 
     def get_supported_languages(self) -> List[str]:
@@ -279,7 +303,7 @@ class SynthDoc:
         lang_info = self.language_support.get_language(code)
         if not lang_info:
             return None
-        
+
         return {
             "code": lang_info.code,
             "name": lang_info.name,
@@ -325,21 +349,23 @@ class SynthDoc:
             ...     input_images="document.png",
             ...     target_languages=["hi", "fr"]
             ... )
-            
+
             >>> # Translate all images in a directory with custom model
             >>> result = synthdoc.translate_documents(
             ...     input_images="./documents/",
             ...     target_languages=["zh", "ar"],
             ...     yolo_model_path="path/to/custom_yolo_model.pt"
             ... )
-            
+
             >>> # Translate from existing dataset
             >>> result = synthdoc.translate_documents(
             ...     input_dataset=existing_dataset,
             ...     target_languages=["es", "de"]
             ... )
         """
-        self.logger.info(f"🌍 Starting document translation to languages: {target_languages}")
+        self.logger.info(
+            f"🌍 Starting document translation to languages: {target_languages}"
+        )
 
         # Handle single image path input
         if isinstance(input_images, (str, Path)):
@@ -347,14 +373,17 @@ class SynthDoc:
 
         # Set default paths if not provided
         if yolo_model_path is None:
-            # Use the default YOLO model path (relative to current directory)
-            yolo_model_path = "./model-doclayout-yolo.pt"
-            
+            # Use the model manager to ensure the YOLO model is downloaded
+            self.logger.info("🔄 Ensuring YOLO model is available...")
+            yolo_model_path = str(ensure_model("doclayout-yolo"))
+
         if font_path is None:
             # Use SynthDoc's built-in font path
             font_path = Path(__file__).parent / "fonts"
             if not font_path.exists():
-                raise ValueError(f"Font path not found: {font_path}. Please provide valid font_path.")
+                raise ValueError(
+                    f"Font path not found: {font_path}. Please provide valid font_path."
+                )
 
         # Convert dataset input format
         dataset_list = None
@@ -379,15 +408,49 @@ class SynthDoc:
         try:
             # Use workflow to translate documents
             result = self.document_translator.process(config)
-            self.logger.info(f"✅ Successfully translated {result.num_samples} documents")
+            self.logger.info(
+                f"✅ Successfully translated {result.num_samples} documents"
+            )
             return result.dataset
         except Exception as e:
             self.logger.error(f"❌ Document translation failed: {e}")
             # Return fallback dataset with error information
             from datasets import Dataset
-            return Dataset.from_dict({
-                'error': [str(e)],
-                'note': ['Document translation failed - check YOLO model, fonts, and translation dependencies'],
-                'input_languages_requested': [target_languages],
-                'fallback': [True]
-            })
+
+            return Dataset.from_dict(
+                {
+                    "error": [str(e)],
+                    "note": [
+                        "Document translation failed - check YOLO model, fonts, and translation dependencies"
+                    ],
+                    "input_languages_requested": [target_languages],
+                    "fallback": [True],
+                }
+            )
+
+    def _check_model_status(self):
+        """Check status of required models and provide helpful information."""
+        try:
+            from .models_manager import is_model_downloaded, list_available_models
+
+            models_status = {}
+            for model_name in list_available_models():
+                models_status[model_name] = is_model_downloaded(model_name)
+
+            missing_models = [
+                name for name, downloaded in models_status.items() if not downloaded
+            ]
+
+            if missing_models:
+                self.logger.info(
+                    f"📦 Models available for auto-download: {', '.join(missing_models)}"
+                )
+                self.logger.info(
+                    "💡 Models will be downloaded automatically when needed"
+                )
+            else:
+                self.logger.info("✅ All models are ready")
+
+        except Exception as e:
+            # Don't fail initialization if model checking fails
+            self.logger.debug(f"Could not check model status: {e}")

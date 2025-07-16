@@ -456,7 +456,8 @@ class VQAGenerationConfig(BaseModel):
     """Configuration for generating visual question-answering datasets."""
 
     documents: List[Union[str, Path]] = Field(
-        default_factory=list, description="Source documents for VQA generation (files or directories)"
+        default_factory=list,
+        description="Source documents for VQA generation (files or directories)",
     )
     single_image: Optional[Union[str, Path]] = Field(
         default=None, description="Single image file for VQA generation"
@@ -471,20 +472,24 @@ class VQAGenerationConfig(BaseModel):
         default=None, description="Folder containing PDFs for VQA generation"
     )
     num_questions_per_doc: int = Field(
-        default=5, ge=1, description="Number of VQA pairs per image (fixed at 5 in current implementation)"
+        default=5,
+        ge=1,
+        description="Number of VQA pairs per image (fixed at 5 in current implementation)",
     )
     include_hard_negatives: bool = Field(
         default=True, description="Include hard negative examples"
     )
     question_types: Optional[List[str]] = Field(
-        default=None, description="Types of questions to generate (factual, reasoning, counting, etc.)"
+        default=None,
+        description="Types of questions to generate (factual, reasoning, counting, etc.)",
     )
     difficulty_levels: Optional[List[str]] = Field(
         default=None,
         description="Difficulty levels for generated questions (easy, medium, hard, etc.)",
     )
     processing_mode: str = Field(
-        default="VLM", description="Processing mode: 'VLM' for vision+text or 'LLM' for text-only"
+        default="VLM",
+        description="Processing mode: 'VLM' for vision+text or 'LLM' for text-only",
     )
     llm_model: str = Field(
         default="gemini-2.5-flash", description="LLM model to use for VQA generation"
@@ -492,39 +497,41 @@ class VQAGenerationConfig(BaseModel):
     output_format: OutputFormat = Field(
         default=OutputFormat.HUGGINGFACE, description="Output format"
     )
-    
-    @model_validator(mode='before')
+
+    @model_validator(mode="before")
     def collect_all_inputs(cls, values):
         """Collect all input sources into the documents list."""
         if isinstance(values, dict):
-            documents = values.get('documents', []) or []
-            
+            documents = values.get("documents", []) or []
+
             # Add single image
-            if values.get('single_image'):
-                documents.append(values['single_image'])
-            
+            if values.get("single_image"):
+                documents.append(values["single_image"])
+
             # Add image folder
-            if values.get('image_folder'):
-                documents.append(values['image_folder'])
-            
+            if values.get("image_folder"):
+                documents.append(values["image_folder"])
+
             # Add PDF file
-            if values.get('pdf_file'):
-                documents.append(values['pdf_file'])
-            
+            if values.get("pdf_file"):
+                documents.append(values["pdf_file"])
+
             # Add PDF folder
-            if values.get('pdf_folder'):
-                documents.append(values['pdf_folder'])
-            
+            if values.get("pdf_folder"):
+                documents.append(values["pdf_folder"])
+
             # Update documents list
-            values['documents'] = documents
-        
+            values["documents"] = documents
+
         return values
-    
-    @model_validator(mode='after')
+
+    @model_validator(mode="after")
     def validate_input_provided(self):
         """Validate that at least one input source is provided."""
         if not self.documents:
-            raise ValueError("At least one input source must be provided (documents, single_image, image_folder, pdf_file, or pdf_folder)")
+            raise ValueError(
+                "At least one input source must be provided (documents, single_image, image_folder, pdf_file, or pdf_folder)"
+            )
         return self
 
 
@@ -542,18 +549,22 @@ class DocumentTranslationConfig(BaseModel):
         default=None, description="Input dataset with images to translate"
     )
     target_languages: List[str] = Field(
-        default=["hi"], description="Target languages for translation (e.g., ['hi', 'zh', 'fr'])"
+        default=["hi"],
+        description="Target languages for translation (e.g., ['hi', 'zh', 'fr'])",
     )
-    yolo_model_path: str = Field(
-        default="./model-doclayout-yolo.pt",
-        description="Path to the YOLO layout detection model"
+    yolo_model_path: Optional[str] = Field(
+        default=None,
+        description="Path to the YOLO layout detection model (auto-downloaded if None)",
     )
     font_path: str = Field(
         default="./synthdoc/fonts/",
-        description="Path to directory containing language-specific fonts"
+        description="Path to directory containing language-specific fonts",
     )
     confidence_threshold: float = Field(
-        default=0.4, ge=0.0, le=1.0, description="Confidence threshold for layout detection"
+        default=0.4,
+        ge=0.0,
+        le=1.0,
+        description="Confidence threshold for layout detection",
     )
     image_size: int = Field(
         default=1024, gt=0, description="Input image size for YOLO model"
@@ -574,15 +585,10 @@ class DocumentTranslationConfig(BaseModel):
 
     @validator("yolo_model_path")
     def validate_model_path(cls, v):
-        """Validate that YOLO model path exists."""
-        if not Path(v).exists():
-            # For the default model path, provide a helpful warning instead of failing
-            if v == "./model-doclayout-yolo.pt":
-                print(f"⚠️  Warning: Default YOLO model not found at {v}")
-                print("   Download the model from: https://huggingface.co/vikp/doclayout-yolo/tree/main")
-                print("   Or provide a custom yolo_model_path parameter")
-            else:
-                raise ValueError(f"YOLO model path does not exist: {v}")
+        """Validate that YOLO model path exists if provided."""
+        if v is not None and not Path(v).exists():
+            # Check if it's a non-default path that doesn't exist
+            raise ValueError(f"YOLO model path does not exist: {v}")
         return v
 
     @validator("font_path")
@@ -592,15 +598,17 @@ class DocumentTranslationConfig(BaseModel):
             # For the default font path, provide a helpful warning instead of failing
             if v == "./synthdoc/fonts/":
                 print(f"⚠️  Warning: Default font path not found at {v}")
-                print("   Please ensure SynthDoc fonts are available or provide a custom font_path parameter")
+                print(
+                    "   Please ensure SynthDoc fonts are available or provide a custom font_path parameter"
+                )
             else:
                 raise ValueError(f"Font path does not exist: {v}")
         return v
 
-    @validator('input_dataset')
+    @validator("input_dataset")
     def validate_input_provided(cls, v, values):
         """Validate that either input_images or input_dataset is provided."""
-        input_images = values.get('input_images')
+        input_images = values.get("input_images")
         if not input_images and not v:
             raise ValueError("Either input_images or input_dataset must be provided")
         return v
@@ -608,7 +616,7 @@ class DocumentTranslationConfig(BaseModel):
 
 class WorkflowResult(BaseModel):
     """Standard result format for all workflows."""
-    
+
     model_config = {"arbitrary_types_allowed": True}
 
     dataset: Any = Field(description="HuggingFace dataset or dict")
