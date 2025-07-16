@@ -20,7 +20,6 @@ Pipeline:
 """
 
 import os
-import sys
 import json
 import time
 import base64
@@ -28,7 +27,7 @@ import random
 import glob
 import shutil
 from pathlib import Path
-from typing import List, Dict, Any, Union, Optional
+from typing import List, Dict, Union, Optional
 import logging
 
 # Import SynthDoc model manager
@@ -43,6 +42,11 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from datasets import Dataset
+from synthdoc.workflows.base import BaseWorkflow
+from synthdoc.models import DocumentTranslationConfig, WorkflowResult
+from synthdoc.translation import Translator, TranslationError
+from synthdoc.languages import Language
+
 
 # Optional imports with fallbacks
 try:
@@ -64,14 +68,6 @@ except ImportError:
     TESSERACT_AVAILABLE = False
     print("⚠️  pytesseract not available - OCR will be disabled")
 
-try:
-    from deep_translator import GoogleTranslator
-
-    TRANSLATOR_AVAILABLE = True
-except ImportError:
-    TRANSLATOR_AVAILABLE = False
-    print("⚠️  deep_translator not available - translation will be disabled")
-
 # Optional PDF processing
 try:
     import fitz  # PyMuPDF
@@ -85,9 +81,6 @@ except ImportError:
     except ImportError:
         PDF_AVAILABLE = False
         print("⚠️  PDF processing not available - install PyMuPDF or pdf2image")
-
-from ..base import BaseWorkflow
-from ...models import DocumentTranslationConfig, WorkflowResult
 
 
 def pdf_to_images(pdf_path: str, output_dir: str = None) -> List[str]:
@@ -262,35 +255,37 @@ def chunk_text_for_translation(text: str, max_length: int = 4500) -> List[str]:
     return chunks
 
 
-def translate_text_chunks(translator, text: str) -> str:
+def translate_text_chunks(
+    translator: Translator,
+    text: str,
+    target_language: Language,
+    source_language: Optional[Language] = None,
+) -> str:
     """
     Translate text by chunking it if necessary to handle API limits.
 
     Args:
-        translator: GoogleTranslator instance
+        translator: Translator instance
         text: Text to translate
+        target_language: The target language for translation.
+        source_language: The source language of the text. Auto-detect if None.
 
     Returns:
         Translated text
     """
     chunks = chunk_text_for_translation(text)
+    if not chunks:
+        return ""
 
-    if len(chunks) == 1:
-        # Single chunk, translate directly
-        return translator.translate(text)
-
-    # Multiple chunks, translate each and combine
-    translated_chunks = []
-    for chunk in chunks:
-        try:
-            translated_chunk = translator.translate(chunk)
-            translated_chunks.append(translated_chunk)
-        except Exception as e:
-            print(f"Warning: Failed to translate chunk: {str(e)[:100]}...")
-            # If translation fails, keep original text for this chunk
-            translated_chunks.append(chunk)
-
-    return " ".join(translated_chunks)
+    try:
+        translated_chunks = translator.translate(
+            chunks, target_language, source_language
+        )
+        return " ".join(translated_chunks)
+    except TranslationError as e:
+        print(f"Warning: Failed to translate chunks: {str(e)[:100]}...")
+        # If translation fails, keep original text
+        return text
 
 
 def wrap_text_for_box(text, box_width, font_path, font_size):
@@ -404,6 +399,7 @@ class ImageTranslator:
         self,
         model_path: str,
         font_path: str,
+        translator: Translator,
         langs: List[str] = ["hi"],
         conf: float = 0.4,
         imgsz: int = 1024,
@@ -411,6 +407,7 @@ class ImageTranslator:
     ):
         self.model_path = model_path
         self.font_path = font_path
+        self.translator = translator
         self.langs = langs
         self.conf = conf
         self.imgsz = imgsz
@@ -418,18 +415,6 @@ class ImageTranslator:
 
         # Initialize outputs for each language
         self.output = {lang: {} for lang in self.langs}
-
-        # Initialize translators
-        if TRANSLATOR_AVAILABLE:
-            self.translators = {
-                lang: GoogleTranslator(source="auto", target=lang)
-                for lang in self.langs
-            }
-        else:
-            self.translators = {}
-            self.logger.warning(
-                "Translation not available - will preserve original text"
-            )
 
         # Layout class mapping for YOLO detection
         self.class_mapping = {
@@ -529,7 +514,9 @@ class ImageTranslator:
                         try:
                             # Use chunking to handle long text that exceeds API limits
                             translated_text = translate_text_chunks(
-                                self.translators[lang], region["english_text"]
+                                self.translator,
+                                region["english_text"],
+                                Language(lang),
                             )
                             translated_region["translated_text"] = translated_text
 
@@ -605,11 +592,16 @@ class DocumentTranslator(BaseWorkflow):
     - Layout preservation through bounding box detection
     """
 
-    def __init__(self, save_dir: str = "document_translation_output"):
+    def __init__(
+        self,
+        save_dir: str,
+        translator: Translator,
+    ):
         super().__init__()
         self.save_dir = save_dir
         self.workflow_name = "document_translation"
         self.logger = logging.getLogger(__name__)
+        self.translator = translator
         self._setup_save_directory()
 
     def _setup_save_directory(self):
@@ -621,7 +613,7 @@ class DocumentTranslator(BaseWorkflow):
 
         # Create metadata.jsonl if it doesn't exist
         if not os.path.exists(self.metadata_file):
-            with open(self.metadata_file, "w", encoding="utf-8") as f:
+            with open(self.metadata_file, "w", encoding="utf-8"):
                 pass  # Create empty file
 
         print(f"✅ Save directory created: {self.save_dir}")
@@ -661,12 +653,6 @@ class DocumentTranslator(BaseWorkflow):
             self.logger.error("Tesseract not available")
             return self._create_fallback_result(
                 "Tesseract dependency not available", start_time
-            )
-
-        if not TRANSLATOR_AVAILABLE:
-            self.logger.error("Deep-translator not available")
-            return self._create_fallback_result(
-                "Translation dependency not available", start_time
             )
 
         # Step 1: Collect input files
@@ -714,9 +700,10 @@ class DocumentTranslator(BaseWorkflow):
                     "Please provide a valid yolo_model_path."
                 )
 
-        translator = ImageTranslator(
+        image_translator = ImageTranslator(
             model_path=yolo_model_path,
             font_path=config.font_path,
+            translator=self.translator,
             langs=config.target_languages,
             conf=config.confidence_threshold,
             imgsz=config.image_size,
@@ -734,7 +721,7 @@ class DocumentTranslator(BaseWorkflow):
 
                 # Load and process image
                 image = Image.open(image_path)
-                json_output = translator.process_single_image(idx, image)
+                json_output = image_translator.process_single_image(idx, image)
                 translations = json.loads(json_output)
 
                 # Save results for each language
