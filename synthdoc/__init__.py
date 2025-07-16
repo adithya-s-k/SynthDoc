@@ -123,7 +123,7 @@ def create_raw_documents(
             )
 
     # Create workflow
-    generator = RawDocumentGenerator(groq_api_key=api_key, save_dir=save_dir)
+    generator = RawDocumentGenerator(api_key=api_key, save_dir=save_dir)
 
     # Create configuration
     config = RawDocumentGenerationConfig(

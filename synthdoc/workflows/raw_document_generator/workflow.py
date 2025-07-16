@@ -14,14 +14,22 @@ from ...utils import CostTracker
 
 
 class RawDocumentGenerator(BaseWorkflow):
-    """Generate synthetic documents from scratch using LLMs."""
+    """Generate synthetic documents from scratch using LLMs via LiteLLM."""
 
-    def __init__(self, groq_api_key: Optional[str] = None, save_dir: str = "raw_document_output"):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, save_dir: str = "raw_document_output"):
         super().__init__()
+
+        # Auto-detect API key if not provided
+        if api_key is None:
+            from ...config import get_api_key
+            api_key = get_api_key("auto")
+
         self.save_dir = save_dir
         self.workflow_name = "raw_document_generation"
+        self.api_key = api_key
+        self.model = model
         self._setup_save_directory()
-        self._setup_apis(groq_api_key)
+        self._setup_apis()
         self.base_prompt_template = "Write a comprehensive, well-structured document in {language} about"
         self.cost_tracker = CostTracker()
 
@@ -44,10 +52,21 @@ class RawDocumentGenerator(BaseWorkflow):
         print(f"📂 Images will be saved to: {self.images_dir}")
         print(f"📄 Metadata will be saved to: {self.metadata_file}")
 
-    def _setup_apis(self, groq_api_key: Optional[str]):
-        """Initialize API configurations."""
-        if groq_api_key:
-            os.environ["GROQ_API_KEY"] = groq_api_key
+    def _setup_apis(self):
+        """Initialize API configurations for LiteLLM."""
+        # Set up API key if provided
+        if self.api_key:
+            # LiteLLM will auto-detect the provider based on model name
+            if self.model and "gemini" in self.model.lower():
+                os.environ["GEMINI_API_KEY"] = self.api_key
+                os.environ["GOOGLE_API_KEY"] = self.api_key  # LiteLLM also checks this
+            elif self.model and "gpt" in self.model.lower():
+                os.environ["OPENAI_API_KEY"] = self.api_key
+            elif self.model and "claude" in self.model.lower():
+                os.environ["ANTHROPIC_API_KEY"] = self.api_key
+            else:
+                print("No api key found")
+
         os.environ["PYTHONIOENCODING"] = "utf-8"
 
         # Configure LiteLLM with built-in retry logic
@@ -71,9 +90,12 @@ class RawDocumentGenerator(BaseWorkflow):
         """
         
         try:
-            # Get model from config
-            from ...config import get_llm_model
-            model = get_llm_model("auto")
+            # Use instance model if provided, otherwise get from config
+            if self.model:
+                model = self.model
+            else:
+                from ...config import get_llm_model
+                model = get_llm_model("auto")
 
             # Use LiteLLM's built-in retry logic
             response = litellm.completion(
@@ -140,9 +162,12 @@ class RawDocumentGenerator(BaseWorkflow):
         3. Do NOT use English unless the target language IS English
         4. Every word must be in {language_name}"""
         
-        # Get model from config instead of hardcoding
-        from ...config import get_llm_model
-        model = get_llm_model("auto")
+        # Use instance model if provided, otherwise get from config
+        if self.model:
+            model = self.model
+        else:
+            from ...config import get_llm_model
+            model = get_llm_model("auto")
 
         # Use LiteLLM's built-in retry logic
         response = litellm.completion(

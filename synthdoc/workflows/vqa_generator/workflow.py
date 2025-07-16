@@ -3,6 +3,7 @@ import json
 import time
 import shutil
 import os
+import enum
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
 from PIL import Image
@@ -10,22 +11,16 @@ from synthdoc.workflows.base import BaseWorkflow
 from synthdoc.models import VQAGenerationConfig, WorkflowResult
 from synthdoc.utils import CostTracker
 
-# Google Gemini API
+# LiteLLM for unified LLM access
 try:
-    from google import genai
-    from google.genai import types
-    from pydantic import BaseModel, Field
-    from typing import List, Optional
-    import enum
-
-    GOOGLE_GENAI_AVAILABLE = True
+    import litellm
+    LITELLM_AVAILABLE = True
 except ImportError:
-    GOOGLE_GENAI_AVAILABLE = False
+    LITELLM_AVAILABLE = False
 
 # PDF processing imports
 try:
     import fitz  # PyMuPDF
-
     PDF_AVAILABLE = True
 except ImportError:
     PDF_AVAILABLE = False
@@ -33,7 +28,6 @@ except ImportError:
 # OCR imports
 try:
     import pytesseract
-
     PYTESSERACT_AVAILABLE = True
 except ImportError:
     PYTESSERACT_AVAILABLE = False
@@ -41,15 +35,18 @@ except ImportError:
 # Language detection
 try:
     from langdetect import detect
-
     LANGDETECT_AVAILABLE = True
 except ImportError:
     LANGDETECT_AVAILABLE = False
 
+# Base64 encoding for images
+import base64
 
 # Pydantic models for structured output
-if GOOGLE_GENAI_AVAILABLE:
+from pydantic import BaseModel, Field
+from typing import List as TypingList
 
+if LITELLM_AVAILABLE:
     class VQADifficulty(str, enum.Enum):
         EASY = "easy"
         MEDIUM = "medium"
@@ -145,7 +142,7 @@ def pdf_to_images(pdf_path: str, output_dir: str = None) -> List[str]:
 
 
 class VQAGenerator(BaseWorkflow):
-    """Generate visual question-answering datasets with Gemini 2.5 Flash and LiteLLM integration."""
+    """Generate visual question-answering datasets with LiteLLM integration."""
 
     def __init__(
         self,
@@ -154,6 +151,12 @@ class VQAGenerator(BaseWorkflow):
         save_dir: str = "vqa_output",
     ):
         super().__init__()
+
+        # Auto-detect API key if not provided
+        if api_key is None:
+            from ...config import get_api_key
+            api_key = get_api_key("auto")
+
         self.api_key = api_key
         self.llm_model = llm_model
         self.save_dir = save_dir
@@ -162,23 +165,27 @@ class VQAGenerator(BaseWorkflow):
         self.temp_dir.mkdir(exist_ok=True)
         self._setup_save_directory()
 
-        # Setup Google Gemini client if API key provided
-        self.gemini_client = None
-        if api_key and api_key != "your_gemini_api_key_here" and GOOGLE_GENAI_AVAILABLE:
+        #setup litellm
+        self.llm_available = False
+        if api_key and LITELLM_AVAILABLE:
             try:
-                self.gemini_client = genai.Client(api_key=api_key)
-                print(f"✅ Google Gemini client initialized with model: {llm_model}")
+                # Configure LiteLLM
+                if api_key != "your_api_key_here":
+                    self._set_api_key_for_model(llm_model, api_key)
+                litellm.set_verbose = False
+                litellm.num_retries = 3
+                litellm.request_timeout = 120
+                litellm.drop_params = True
+                self.llm_available = True
+                print(f"LiteLLM initialized with model: {llm_model}")
             except Exception as e:
-                print(f"⚠️ Failed to initialize Gemini client: {e}")
-                print(f"   API key starts with: {api_key[:10]}...")
-        elif api_key == "your_gemini_api_key_here":
-            print("⚠️ Please set a valid GEMINI_API_KEY in your .env file")
-        elif api_key and not GOOGLE_GENAI_AVAILABLE:
-            print(
-                "⚠️ Google Gemini API not available. Install with: pip install google-genai"
-            )
+                print(f"Failed to initialize LiteLLM: {e}")
+        elif api_key == "your_api_key_here":
+            print("Please set a valid API key in your .env file")
+        elif not LITELLM_AVAILABLE:
+            print("LiteLLM not available. Install with: pip install litellm")
         elif not api_key:
-            print("⚠️ No GEMINI_API_KEY found in environment variables")
+            print("No API key found in environment variables")
 
     def _setup_save_directory(self):
         """Create save directory structure with images folder and metadata.jsonl directly in save_dir."""
@@ -198,6 +205,32 @@ class VQAGenerator(BaseWorkflow):
         print(f"✅ Save directory created: {self.save_dir}")
         print(f"📂 Images will be saved to: {self.images_dir}")
         print(f"📄 Metadata will be saved to: {self.metadata_file}")
+
+    def _set_api_key_for_model(self, model: str, api_key: str):
+        """Set the appropriate API key based on model type."""
+        if model.startswith("gpt") or model.startswith("openai"):
+            os.environ["OPENAI_API_KEY"] = api_key
+        elif model.startswith("claude") or model.startswith("anthropic"):
+            os.environ["ANTHROPIC_API_KEY"] = api_key
+        elif model.startswith("gemini") or model.startswith("google"):
+            os.environ["GEMINI_API_KEY"] = api_key
+            os.environ["GOOGLE_API_KEY"] = api_key  # LiteLLM also checks this
+        else:
+            print("Model Not Initialized")
+
+
+    def _get_image_mime_type(self, image_path: str) -> str:
+        """Get the correct MIME type for the image."""
+        ext = Path(image_path).suffix.lower()
+        mime_types = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.bmp': 'image/bmp',
+            '.tiff': 'image/tiff'
+        }
+        return mime_types.get(ext, 'image/jpeg')
 
     def _detect_language(self, text: str) -> str:
         """Detect the language of the text."""
@@ -335,21 +368,17 @@ class VQAGenerator(BaseWorkflow):
         vqa_pairs = []
         processing_mode = "template"  # Default fallback
 
-        if self.gemini_client:
-            # Use Gemini 2.5 Flash for VQA generation - generates exactly 5 pairs
-            gemini_pairs = self._generate_gemini_vqa(image_path, ocr_result["text"])
+        if self.llm_available:
+            # Use LiteLLM for VQA generation - generates exactly 5 pairs
+            llm_pairs = self._generate_llm_vqa(image_path, ocr_result["text"])
 
-            if gemini_pairs and len(gemini_pairs) >= 5:
-                # Use Gemini-generated pairs (take first 5 to ensure exactly 5)
+            if llm_pairs and len(llm_pairs) >= 5:
+                # Use LLM-generated pairs (take first 5 to ensure exactly 5)
                 processing_mode = "VLM"
-                for q_idx, pair in enumerate(
-                    gemini_pairs[:5]
-                ):  # Ensure exactly 5 pairs
+                for q_idx, pair in enumerate(llm_pairs[:5]):  # Ensure exactly 5 pairs
                     question = pair.get("question", f"Sample question {q_idx + 1}")
                     answer = pair.get("answer", f"Sample answer {q_idx + 1}")
-                    explanation = pair.get(
-                        "explanation", "Generated by Gemini 2.5 Flash"
-                    )
+                    explanation = pair.get("explanation", "Generated by LiteLLM")
                     question_type = pair.get("type", "descriptive")
                     difficulty = pair.get("difficulty", "medium")
 
@@ -374,9 +403,9 @@ class VQAGenerator(BaseWorkflow):
                     }
                     vqa_pairs.append(vqa_pair)
             else:
-                # Fallback to template-based generation if Gemini fails or returns insufficient pairs
+                # Fallback to template-based generation if LLM fails or returns insufficient pairs
                 print(
-                    f"⚠️ Gemini generated {len(gemini_pairs) if gemini_pairs else 0} pairs, falling back to template"
+                    f"LLM generated {len(llm_pairs) if llm_pairs else 0} pairs, falling back to template"
                 )
                 vqa_pairs = self._generate_template_vqa_pairs(ocr_result["text"])
         else:
@@ -410,73 +439,89 @@ class VQAGenerator(BaseWorkflow):
 
         return result
 
-    def _generate_gemini_vqa(self, image_path: str, ocr_text: str) -> List[Dict]:
-        """Generate VQA pairs using Google Gemini API with structured output."""
+    def _generate_llm_vqa(self, image_path: str, ocr_text: str) -> List[Dict]:
+        """Generate VQA pairs using LiteLLM with structured output."""
         try:
             # Create the VQA generation prompt
             prompt = self._create_vqa_prompt_v2(ocr_text)
 
             # Encode image as base64
-            import base64
-
             with open(image_path, "rb") as f:
                 image_data = base64.b64encode(f.read()).decode("utf-8")
 
-            # Create content with image and text
-            contents = [
+            # Create messages with image and text
+            messages = [
                 {
-                    "parts": [
-                        {"text": prompt},
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
                         {
-                            "inline_data": {
-                                "mime_type": "image/jpeg",
-                                "data": image_data,
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{self._get_image_mime_type(image_path)};base64,{image_data}"
                             }
-                        },
+                        }
                     ]
                 }
             ]
 
-            # Generate with structured output
-            response = self.gemini_client.models.generate_content(
+            # Generate with LiteLLM using structured output
+            response = litellm.completion(
                 model=self.llm_model,
-                contents=contents,
-                config={
-                    "response_mime_type": "application/json",
-                    "response_schema": list[VQAPair],
-                },
-            )
-
-            # Use the parsed structured output
-            vqa_pairs: list[VQAPair] = response.parsed
-            print(
-                f"✅ Generated {len(vqa_pairs)} VQA pairs with Gemini (structured output)"
-            )
-
-            # Convert to dictionaries
-            result_pairs = []
-            for pair in vqa_pairs:
-                pair_dict = {
-                    "id": pair.id,
-                    "type": pair.type.value
-                    if hasattr(pair.type, "value")
-                    else pair.type,
-                    "difficulty": pair.difficulty.value
-                    if hasattr(pair.difficulty, "value")
-                    else pair.difficulty,
-                    "question": pair.question,
-                    "answer": pair.answer,
-                    "explanation": pair.explanation,
-                    "hard_negatives": pair.hard_negatives or [],
-                    "choices": pair.choices or [],
+                messages=messages,
+                max_tokens=4000,
+                temperature=0.7,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "vqa_pairs",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "vqa_pairs": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {"type": "string"},
+                                            "type": {"type": "string", "enum": ["descriptive", "mcq"]},
+                                            "difficulty": {"type": "string", "enum": ["easy", "medium", "hard"]},
+                                            "question": {"type": "string"},
+                                            "answer": {"type": "string"},
+                                            "explanation": {"type": "string"},
+                                            "hard_negatives": {"type": "array", "items": {"type": "string"}},
+                                            "choices": {"type": "array", "items": {"type": "string"}}
+                                        },
+                                        "required": ["id", "type", "difficulty", "question", "answer", "explanation"],
+                                        "additionalProperties": False
+                                    }
+                                }
+                            },
+                            "required": ["vqa_pairs"],
+                            "additionalProperties": False
+                        }
+                    }
                 }
-                result_pairs.append(pair_dict)
+            )
 
-            return result_pairs
+            # Track cost
+            cost = self.cost_tracker.track_usage(response, model=self.llm_model)
+            print(f"VQA Generation: ${cost:.6f}")
+
+            # Parse the structured response
+            content = response.choices[0].message.content
+            parsed_data = json.loads(content)
+            vqa_pairs = parsed_data.get("vqa_pairs", [])
+            
+            print(f"✅ Generated {len(vqa_pairs)} VQA pairs with structured output")
+            return vqa_pairs
 
         except Exception as e:
-            print(f"⚠️ Gemini VQA generation failed: {e}")
+            print(f"LiteLLM VQA generation failed: {e}")
             return []
+
+    
 
     def _create_vqa_prompt_v2(self, ocr_text: str) -> str:
         """Create VQA generation prompt for structured output."""
@@ -510,7 +555,9 @@ Generate **5 VQA pairs** with this distribution:
 
 **Question ID Format:** Use "vqa_1", "vqa_2", "vqa_3", "vqa_4", "vqa_5"
 
-Focus on the actual document content, text, data, and information rather than just visual appearance."""
+Focus on the actual document content, text, data, and information rather than just visual appearance.
+
+"""
 
         return prompt
 

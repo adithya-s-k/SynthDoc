@@ -105,6 +105,7 @@ class SynthDocConfig:
     anthropic_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
     cohere_api_key: Optional[str] = None
+    gemini_api_key: Optional[str] = None
     
     # Azure OpenAI
     azure_api_key: Optional[str] = None
@@ -219,6 +220,7 @@ def load_env_config(env_file: Optional[Union[str, Path]] = None) -> SynthDocConf
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
         groq_api_key=os.getenv("GROQ_API_KEY"),
         cohere_api_key=os.getenv("COHERE_API_KEY"),
+        gemini_api_key=os.getenv("GEMINI_API_KEY"),
         
         # Azure OpenAI
         azure_api_key=os.getenv("AZURE_API_KEY"),
@@ -246,40 +248,45 @@ def load_env_config(env_file: Optional[Union[str, Path]] = None) -> SynthDocConf
 def get_api_key(provider: str = "auto") -> Optional[str]:
     """
     Get API key for specified provider with automatic fallback.
-    
+
     Args:
-        provider: API provider ("openai", "anthropic", "groq", "cohere", "auto")
-        
+        provider: API provider ("openai", "anthropic", "groq", "cohere", "gemini", "auto")
+
     Returns:
         str: API key if found, None otherwise
     """
     config = load_env_config()
-    
-    if provider == "auto":
+
+    # Handle specific provider requests
+    if provider == "openai":
+        return config.openai_api_key
+    elif provider == "anthropic":
+        return config.anthropic_api_key
+    elif provider == "groq":
+        return config.groq_api_key
+    elif provider == "cohere":
+        return config.cohere_api_key
+    elif provider == "gemini":
+        return config.gemini_api_key
+    elif provider == "auto":
         # Try providers in order of preference
         providers = [
             ("groq", config.groq_api_key),
             ("openai", config.openai_api_key),
             ("anthropic", config.anthropic_api_key),
-            ("cohere", config.cohere_api_key)
+            ("cohere", config.cohere_api_key),
+            ("gemini", config.gemini_api_key)
         ]
-        
+
         for provider_name, api_key in providers:
             if api_key:
                 print(f"🔑 Using {provider_name.upper()} API key")
                 return api_key
-        
+
         print("⚠️  No API keys found. Please set API keys in .env file")
         return None
-    
     else:
-        # Get specific provider key
-        api_key = getattr(config, f"{provider}_api_key", None)
-        if api_key:
-            print(f"🔑 Using {provider.upper()} API key")
-        else:
-            print(f"⚠️  {provider.upper()} API key not found")
-        return api_key
+        raise ValueError(f"Unknown provider: {provider}. Supported: openai, anthropic, groq, cohere, gemini, auto")
 
 
 def get_llm_model(provider: str = "auto") -> str:
@@ -335,6 +342,8 @@ def setup_environment() -> Dict[str, Any]:
         available_providers.append("Groq")
     if config.cohere_api_key:
         available_providers.append("Cohere")
+    if config.gemini_api_key:
+        available_providers.append("Gemini")
     
     # Check Azure configuration
     azure_configured = bool(config.azure_api_key and config.azure_api_base)
