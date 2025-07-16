@@ -7,7 +7,7 @@ name = "synthdoc"
 version = "0.1.0"
 description = "A comprehensive library for generating synthetic documents designed for training and evaluating models in document understanding tasks"
 authors = [
-    {name = "Adithya Skolavi", email = "adithya@example.com"}
+    {name = "Adithya Skolavi", email = "adithyaskolavi@gmail.com"}
 ]
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -71,8 +71,8 @@ dev = ["pytest>=7.4.0", "pytest-cov>=4.1.0", "black>=23.9.0", "isort>=5.12.0"]
 synthdoc = "synthdoc.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/synthdoc"
-Repository = "https://github.com/yourusername/synthdoc"
+Homepage = "https://github.com/adithya-s-k/SynthDoc"
+Repository = "https://github.com/adithya-s-k/SynthDoc"
 
 [tool.setuptools.packages.find]
 where = ["."]
