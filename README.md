@@ -4,12 +4,13 @@ A comprehensive library for generating synthetic documents designed for training
 
 ## Features
 
-✅ **Multi-language Support**: Generate documents in various languages with appropriate fonts and scripts
-✅ **Flexible Document Generation**: Create documents from scratch using LLMs or augment existing documents
-✅ **Layout Analysis**: Extract and manipulate document layouts for training layout detection models
-✅ **VQA Dataset Creation**: Generate visual question-answering datasets with hard negatives for retrieval training
-✅ **Handwriting Support**: Create handwritten documents using custom fonts and templates
-✅ **HuggingFace Integration**: Output datasets in HuggingFace format for seamless integration with ML pipelines
+✅ **Multi-language Support**: Generate documents in various languages with appropriate fonts and scripts (Fully Implemented)
+✅ **Flexible Document Generation**: Create documents from scratch using LLMs or augment existing documents (Fully Implemented)
+✅ **Layout Analysis**: Extract and manipulate document layouts for training layout detection models (Fully Implemented)
+✅ **VQA Dataset Creation**: Generate visual question-answering datasets with hard negatives for retrieval training (Fully Implemented)
+✅ **Handwriting Support**: Create handwritten documents using custom fonts and templates with paper styles (Fully Implemented)
+✅ **PDF Document Recombination**: Extract and recombine elements from existing PDF documents (Fully Implemented)
+✅ **HuggingFace Integration**: Output datasets in HuggingFace format for seamless integration with ML pipelines (Fully Implemented)
 
 ## Workflows
 
@@ -30,7 +31,24 @@ Generate synthetic documents from scratch using Large Language Models (LLMs) to 
 2. Content is structured into document format with proper formatting
 3. Optional augmentations are applied (rotation, noise, etc.)
 
-**Output**: Documents with rich textual content ready for layout application
+**Output**: Standardized structure with:
+- `images/` folder containing generated document images (PNG format)
+- `metadata.jsonl` file with one JSON entry per image containing:
+  - `file_name`: Image filename
+  - `image_path`: Relative path to image (e.g., "images/document_en_12345_page_1.png")
+  - `id`: Unique identifier for the document page
+  - `document_id`: Identifier for the document collection
+  - `page_number`: Page number within the document
+  - `language`: Language of the generated content
+  - `prompt`: The prompt used for content generation
+  - `content_preview`: Preview of the generated text content
+  - `layout_type`: Layout style used (e.g., "SINGLE_COLUMN", "TWO_COLUMN")
+  - `has_graphs`: Whether the page includes generated graphs
+  - `has_tables`: Whether the page includes generated tables
+  - `has_ai_images`: Whether the page includes AI-generated images
+  - `generated_by`: Identifier for the generation workflow
+
+This structure matches the standardized format used by other SynthDoc workflows (VQA generation, document translation) for consistency and interoperability.
 
 ---
 
@@ -140,8 +158,13 @@ Generate documents with handwritten appearance using custom handwriting fonts an
 **Process**:
 1. Apply handwriting fonts to generated or existing content
 2. Simulate natural handwriting variations (spacing, alignment, pressure)
-3. Add realistic paper backgrounds and artifacts
+3. Add realistic paper backgrounds and artifacts (lined paper, grid paper, or blank)
 4. Include common handwriting imperfections for robustness
+
+**Paper Template Options**:
+- `lined`: Traditional lined notebook paper with horizontal lines and margin
+- `grid`: Graph paper with grid lines for technical writing
+- `blank`: Clean paper with subtle texture and minimal guidelines
 
 **Output**: HuggingFace dataset optimized for handwritten document understanding tasks
 
@@ -170,68 +193,111 @@ pip install -e .[llm]
 
 ## Quick Start
 
-### Minimal Workflow Usage
+### Setup with .env Configuration (Recommended)
 
-Each workflow has a simple configuration class and returns HuggingFace dataset format:
-
-```python
-from synthdoc.models import RawDocumentGenerationConfig, AugmentationType
-from synthdoc.workflows import RawDocumentGenerator
-
-# 1. Raw Document Generation
-config = RawDocumentGenerationConfig(
-    language="en",
-    num_pages=3,
-    augmentations=[AugmentationType.ROTATION, AugmentationType.NOISE]
-)
-
-generator = RawDocumentGenerator()
-result = generator.process(config)
-
-print(f"Generated {result.num_samples} samples")
-print(f"Dataset: {result.dataset}")  # HuggingFace format
+1. **Install SynthDoc**:
+```bash
+pip install synthdoc[llm]  # Includes LLM support
 ```
 
-### All Workflows
+2. **Configure environment**:
+```bash
+# Copy the environment template
+cp env.template .env
+
+# Edit .env file and add your API keys
+# OPENAI_API_KEY=your_openai_key_here
+# GROQ_API_KEY=your_groq_key_here
+# etc.
+```
+
+3. **Use SynthDoc with automatic configuration**:
+```python
+from synthdoc import SynthDoc
+
+# SynthDoc automatically loads from .env file
+synth = SynthDoc()  # API keys and models auto-detected
+
+# Generate raw documents using LLM
+documents = synth.generate_raw_docs(
+    language="en", 
+    num_pages=3,
+    prompt="Generate a technical report about AI"
+)
+
+# Apply layout augmentation
+dataset = synth.augment_layout(
+    documents=documents,
+    fonts=["Arial", "Times New Roman"],
+    augmentations=["rotation", "scaling"]
+)
+
+# Generate VQA pairs using LLM
+vqa_dataset = synth.generate_vqa(
+    source_documents=documents,
+    question_types=["factual", "reasoning", "comparative"],
+    difficulty_levels=["easy", "medium", "hard"]
+)
+
+# Generate handwritten documents with different paper styles
+handwriting_lined = synth.generate_handwriting(
+    content="Practice handwriting on lined paper",
+    writing_style="cursive",
+    paper_template="lined"
+)
+
+handwriting_grid = synth.generate_handwriting(
+    content="Technical notes on grid paper",
+    writing_style="print", 
+    paper_template="grid"
+)
+
+handwriting_blank = synth.generate_handwriting(
+    content="Creative writing on blank paper",
+    writing_style="mixed",
+    paper_template="blank"
+)
+```
+
+### Environment Status Check
 
 ```python
-from synthdoc.models import *
-from synthdoc.workflows import *
+from synthdoc import print_environment_status
 
-# 1. Raw Document Generation
-raw_config = RawDocumentGenerationConfig(language="en", num_pages=2)
-raw_result = RawDocumentGenerator().process(raw_config)
+# Check your configuration
+print_environment_status()
+```
 
-# 2. Layout Augmentation
-layout_config = LayoutAugmentationConfig(
-    documents=["doc1.pdf", "doc2.pdf"],
-    languages=["en"],
-    augmentations=[AugmentationType.SCALING]
-)
-layout_result = LayoutAugmenter().process(layout_config)
+### Using Different LLM Providers
 
-# 3. PDF Augmentation
-pdf_config = PDFAugmentationConfig(
-    pdf_files=["input.pdf"],
-    augmentations=[AugmentationType.BLUR]
-)
-pdf_result = PDFAugmenter().process(pdf_config)
+SynthDoc uses [LiteLLM](https://github.com/BerriAI/litellm) for unified LLM access. Configure providers in `.env`:
 
-# 4. VQA Generation
-vqa_config = VQAGenerationConfig(
-    documents=["doc.pdf"],
-    num_questions_per_doc=5,
-    include_hard_negatives=True
-)
-vqa_result = VQAGenerator().process(vqa_config)
+```bash
+# .env file configuration
+OPENAI_API_KEY=your_openai_key
+ANTHROPIC_API_KEY=your_anthropic_key  
+GROQ_API_KEY=your_groq_key
+DEFAULT_LLM_MODEL=gpt-4o-mini
+```
 
-# 5. Handwriting Generation
-handwriting_config = HandwritingGenerationConfig(
-    text_content="Sample text",
-    handwriting_style="cursive",
-    num_samples=10
-)
-handwriting_result = HandwritingGenerator().process(handwriting_config)
+```python
+# Automatic provider selection (uses .env)
+synth = SynthDoc()  # Auto-detects best available provider
+
+# Manual provider override
+synth_openai = SynthDoc(llm_model="gpt-4o-mini")
+synth_claude = SynthDoc(llm_model="claude-3-5-sonnet-20241022")
+synth_groq = SynthDoc(llm_model="groq/llama-3-8b-8192")
+
+# Local Ollama models (no API key needed)
+synth_ollama = SynthDoc(llm_model="ollama/llama2")
+```
+
+### Manual API Key Override (Not Recommended)
+
+```python
+# You can still manually pass API keys if needed
+synth = SynthDoc(llm_model="gpt-4o-mini", api_key="your-key-here")
 ```
 
 All workflows return `WorkflowResult` with:
@@ -242,15 +308,14 @@ All workflows return `WorkflowResult` with:
 ### Available Augmentations
 
 ```python
-from synthdoc.models import AugmentationType
+# Initialize without API keys in .env file
+synth = SynthDoc()  # Will use fallback mode if no API keys found
 
-# Available augmentation types:
-AugmentationType.ROTATION
-AugmentationType.SCALING  
-AugmentationType.NOISE
-AugmentationType.BLUR
-AugmentationType.COLOR_SHIFT
-AugmentationType.CROPPING
+# Still generates documents but with template content
+documents = synth.generate_raw_docs(language="en", num_pages=2)
+
+# Disable automatic .env loading if needed
+synth = SynthDoc(load_dotenv=False)
 ```
 
 ## Contributing
@@ -263,12 +328,13 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## Roadmap
 
-- [ ] Implement core document generation pipeline
-    - [ ] Integrate LLMs for content generation
+- [x] Implement core document generation pipeline
+    - [x] Integrate LLMs for content generation
+    - [x] Document rendering (text to images)
     - [ ] Add docling and MinerU support
-- [ ] Add multi-language font support
-- [ ] Develop layout augmentation engine
-- [ ] Create VQA generation module
-- [ ] Implement handwriting synthesis
-- [ ] Add comprehensive testing suite
-- [ ] Create documentation and tutorials
+- [x] Add multi-language font support
+- [x] Develop layout augmentation engine
+- [x] Create VQA generation module
+- [x] Implement handwriting synthesis
+- [x] Add comprehensive testing suite
+- [x] Create documentation and tutorials
