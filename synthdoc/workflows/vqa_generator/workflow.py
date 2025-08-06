@@ -216,7 +216,7 @@ class VQAGenerator(BaseWorkflow):
             os.environ["GEMINI_API_KEY"] = api_key
             os.environ["GOOGLE_API_KEY"] = api_key  # LiteLLM also checks this
         else:
-            print("Model Not Initialized")
+            print(f"Unknown model type '{model}' - unable to set API key. Supported prefixes: gpt, claude, gemini")
 
 
     def _get_image_mime_type(self, image_path: str) -> str:
