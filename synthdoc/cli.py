@@ -12,6 +12,13 @@ from typing import List, Optional
 
 from .core import SynthDoc
 from .languages import LanguageSupport
+from .models_manager import (
+    download_model,
+    list_available_models,
+    get_model_info,
+    is_model_downloaded,
+    cleanup_models,
+)
 
 app = typer.Typer(
     name="synthdoc",
@@ -29,11 +36,9 @@ def generate(
     prompt: Optional[str] = typer.Option(
         None, "--prompt", help="Custom generation prompt"
     ),
-    augment: List[str] = typer.Option(
-        [], "--augment", "-a", help="Augmentation techniques"
-    ),
+    # Removed augment parameter - augmentation not implemented
     model: str = typer.Option(
-        "gpt-3.5-turbo", "--model", "-m", help="LLM model for content generation"
+        "gpt-4o-mini", "--model", "-m", help="LLM model for content generation"
     ),
     api_key: Optional[str] = typer.Option(
         None, "--api-key", help="API key for LLM provider"
@@ -48,7 +53,7 @@ def generate(
 
     try:
         documents = synth.generate_raw_docs(
-            language=language, num_pages=pages, prompt=prompt, augmentations=augment
+            language=language, num_pages=pages, prompt=prompt
         )
 
         console.print(f"[green]✓ Generated {len(documents)} documents[/green]")
@@ -75,59 +80,7 @@ def languages():
     console.print(table)
 
 
-@app.command()
-def layout(
-    input_dir: str = typer.Argument(..., help="Input directory with documents"),
-    output: str = typer.Option("./output", "--output", "-o", help="Output directory"),
-    languages: List[str] = typer.Option(
-        ["en"], "--lang", "-l", help="Target languages"
-    ),
-    fonts: List[str] = typer.Option([], "--font", "-f", help="Font families"),
-    augment: List[str] = typer.Option(
-        [], "--augment", "-a", help="Augmentation techniques"
-    ),
-    model: str = typer.Option(
-        "gpt-3.5-turbo", "--model", "-m", help="LLM model for content generation"
-    ),
-    api_key: Optional[str] = typer.Option(
-        None, "--api-key", help="API key for LLM provider"
-    ),
-):
-    """Apply layout augmentation to documents."""
-    console.print(f"[green]Augmenting documents from {input_dir}[/green]")
-
-    input_path = Path(input_dir)
-    if not input_path.exists():
-        console.print(f"[red]Error: Input directory {input_dir} does not exist[/red]")
-        raise typer.Exit(1)
-
-    synth = SynthDoc(output_dir=output, llm_model=model, api_key=api_key)
-
-    try:
-        # Find document files
-        doc_files = (
-            list(input_path.glob("*.pdf"))
-            + list(input_path.glob("*.png"))
-            + list(input_path.glob("*.jpg"))
-        )
-
-        if not doc_files:
-            console.print(f"[red]No documents found in {input_dir}[/red]")
-            raise typer.Exit(1)
-
-        dataset = synth.augment_layout(
-            document_paths=doc_files,
-            languages=languages,
-            fonts=fonts,
-            augmentations=augment,
-        )
-
-        console.print(f"[green]✓ Layout augmentation complete[/green]")
-        console.print(f"[blue]Dataset saved to: {output}[/blue]")
-
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1)
+# Removed layout command - layout augmentation workflow not implemented
 
 
 @app.command()
@@ -141,7 +94,7 @@ def vqa(
         ["easy", "medium"], "--difficulty", "-d", help="Difficulty levels"
     ),
     model: str = typer.Option(
-        "gpt-3.5-turbo", "--model", "-m", help="LLM model for VQA generation"
+        "gpt-4o-mini", "--model", "-m", help="LLM model for VQA generation"
     ),
     api_key: Optional[str] = typer.Option(
         None, "--api-key", help="API key for LLM provider"
@@ -209,6 +162,139 @@ def info():
     console.print("\n[bold]Language Distribution:[/bold]")
     for category, count in lang_categories.items():
         console.print(f"  {category}: {count} languages")
+
+
+# Model management commands
+@app.command()
+def download_models(
+    model_name: Optional[str] = typer.Argument(
+        None, help="Model name to download (default: all)"
+    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Force re-download"),
+):
+    """Download pre-trained models."""
+    if model_name:
+        if model_name not in list_available_models():
+            console.print(f"[red]Error: Unknown model '{model_name}'[/red]")
+            console.print("Available models:")
+            list_models()
+            return
+
+        console.print(f"[blue]Downloading model: {model_name}[/blue]")
+        try:
+            path = download_model(model_name, force_download=force)
+            console.print(f"[green]✅ Model downloaded to: {path}[/green]")
+        except Exception as e:
+            console.print(f"[red]❌ Download failed: {e}[/red]")
+    else:
+        # Download all models
+        available_models = list_available_models()
+        console.print(f"[blue]Downloading {len(available_models)} models...[/blue]")
+
+        for model in available_models:
+            console.print(f"\n[blue]Downloading {model}...[/blue]")
+            try:
+                path = download_model(model, force_download=force)
+                console.print(f"[green]✅ {model} downloaded to: {path}[/green]")
+            except Exception as e:
+                console.print(f"[red]❌ {model} download failed: {e}[/red]")
+
+
+@app.command()
+def list_models():
+    """List available models and their download status."""
+    console.print("[bold]Available Models:[/bold]\n")
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Model", style="cyan")
+    table.add_column("Description", style="white")
+    table.add_column("Size (MB)", justify="right", style="yellow")
+    table.add_column("Status", justify="center")
+
+    available_models = list_available_models()
+    for model_name, config in available_models.items():
+        try:
+            info = get_model_info(model_name)
+            status = "✅ Downloaded" if info["downloaded"] else "❌ Not downloaded"
+            status_style = "green" if info["downloaded"] else "red"
+        except Exception:
+            status = "❓ Unknown"
+            status_style = "yellow"
+
+        table.add_row(
+            model_name,
+            config["description"],
+            str(config["size_mb"]),
+            f"[{status_style}]{status}[/{status_style}]",
+        )
+
+    console.print(table)
+
+    console.print("\n[bold]Usage:[/bold]")
+    console.print("  synthdoc download-models <model_name>  # Download specific model")
+    console.print("  synthdoc download-models               # Download all models")
+
+
+@app.command()
+def model_info(
+    model_name: str = typer.Argument(..., help="Model name to get info about"),
+):
+    """Get detailed information about a specific model."""
+    try:
+        info = get_model_info(model_name)
+
+        console.print(f"[bold]Model: {model_name}[/bold]\n")
+
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Property", style="cyan")
+        table.add_column("Value", style="white")
+
+        table.add_row("Description", info["description"])
+        table.add_row("Repository", info["repo_id"])
+        table.add_row("Remote Size", f"{info['size_mb']} MB")
+        table.add_row("Downloaded", "✅ Yes" if info["downloaded"] else "❌ No")
+
+        if info["downloaded"]:
+            table.add_row("Local Path", info["local_path"])
+            table.add_row("Local Size", f"{info.get('local_size_mb', 'Unknown')} MB")
+
+        console.print(table)
+
+        if not info["downloaded"]:
+            console.print(
+                f"\n[yellow]To download: synthdoc download-models {model_name}[/yellow]"
+            )
+
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+@app.command()
+def clean_models(
+    model_name: Optional[str] = typer.Argument(
+        None, help="Model name to remove (default: all)"
+    ),
+    confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+):
+    """Remove downloaded models to free up space."""
+    if not confirm:
+        if model_name:
+            if not typer.confirm(f"Remove model '{model_name}'?"):
+                console.print("Cancelled.")
+                return
+        else:
+            if not typer.confirm("Remove ALL downloaded models?"):
+                console.print("Cancelled.")
+                return
+
+    try:
+        cleanup_models(model_name)
+        if model_name:
+            console.print(f"[green]✅ Removed model: {model_name}[/green]")
+        else:
+            console.print("[green]✅ Removed all models[/green]")
+    except Exception as e:
+        console.print(f"[red]❌ Error: {e}[/red]")
 
 
 def main():

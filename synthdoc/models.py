@@ -1,17 +1,15 @@
 """
-Pydantic models for SynthDoc dataset management.
-
-This module contains all the Pydantic models used for type-safe dataset management,
-including metadata structures, validation schemas, and configuration models.
+Data models for SynthDoc workflows and configuration.
 """
 
-from typing import Dict, List, Optional, Union, Any, Literal
-from pathlib import Path
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Union
 
-from pydantic import BaseModel, Field, validator, ConfigDict
+from pydantic import BaseModel, Field, validator, ConfigDict, model_validator
 from pydantic.types import UUID4
+from .languages import Language
 
 
 class SplitType(str, Enum):
@@ -398,4 +396,234 @@ def create_document_metadata(
         ),
         source=source,
         custom=kwargs if kwargs else None,
+    )
+
+
+# Removed unused AugmentationType enum
+
+
+class LayoutType(Enum):
+    SINGLE_COLUMN = "SINGLE_COLUMN"
+    TWO_COLUMN = "TWO_COLUMN"
+    THREE_COLUMN = "THREE_COLUMN"
+    FOUR_COLUMN = "FOUR_COLUMN"
+    NEWSLETTER = "NEWSLETTER"
+    MAGAZINE = "MAGAZINE"
+    ACADEMIC = "ACADEMIC"
+    NEWSPAPER = "NEWSPAPER"
+    BROCHURE = "BROCHURE"
+    REPORT = "REPORT"
+
+
+class OutputFormat(Enum):
+    HUGGINGFACE = "huggingface"
+
+
+# Raw Document Generation Workflow
+class RawDocumentGenerationConfig(BaseModel):
+    """Configuration for generating synthetic documents from scratch using LLMs."""
+
+    language: Language = Field(
+        default=Language.EN, description="Target language for content generation"
+    )
+    num_pages: int = Field(default=1, ge=1, description="Number of pages to generate")
+    prompt: Optional[str] = Field(
+        default=None, description="Custom prompt for content generation"
+    )
+    layout_type: LayoutType = Field(
+        default=LayoutType.SINGLE_COLUMN, description="Document layout type"
+    )
+    include_graphs: bool = Field(
+        default=False, description="Include graphs in generated documents"
+    )
+    include_tables: bool = Field(
+        default=False, description="Include tables in generated documents"
+    )
+    include_ai_images: bool = Field(
+        default=False, description="Include AI-generated images"
+    )
+    # Removed augmentations field - not implemented yet
+    output_format: OutputFormat = Field(
+        default=OutputFormat.HUGGINGFACE, description="Output format"
+    )
+
+
+# Removed unused LayoutAugmentationConfig and PDFAugmentationConfig classes
+
+
+# VQA Generation Workflow
+class VQAGenerationConfig(BaseModel):
+    """Configuration for generating visual question-answering datasets."""
+
+    documents: List[Union[str, Path]] = Field(
+        default_factory=list,
+        description="Source documents for VQA generation (files or directories)",
+    )
+    single_image: Optional[Union[str, Path]] = Field(
+        default=None, description="Single image file for VQA generation"
+    )
+    image_folder: Optional[Union[str, Path]] = Field(
+        default=None, description="Folder containing images for VQA generation"
+    )
+    pdf_file: Optional[Union[str, Path]] = Field(
+        default=None, description="Single PDF file for VQA generation"
+    )
+    pdf_folder: Optional[Union[str, Path]] = Field(
+        default=None, description="Folder containing PDFs for VQA generation"
+    )
+    num_questions_per_doc: int = Field(
+        default=5,
+        ge=1,
+        description="Number of VQA pairs per image (fixed at 5 in current implementation)",
+    )
+    include_hard_negatives: bool = Field(
+        default=True, description="Include hard negative examples"
+    )
+    question_types: Optional[List[str]] = Field(
+        default=None,
+        description="Types of questions to generate (factual, reasoning, counting, etc.)",
+    )
+    difficulty_levels: Optional[List[str]] = Field(
+        default=None,
+        description="Difficulty levels for generated questions (easy, medium, hard, etc.)",
+    )
+    processing_mode: str = Field(
+        default="VLM",
+        description="Processing mode: 'VLM' for vision+text or 'LLM' for text-only",
+    )
+    llm_model: str = Field(
+        default="gemini-2.5-flash", description="LLM model to use for VQA generation"
+    )
+    output_format: OutputFormat = Field(
+        default=OutputFormat.HUGGINGFACE, description="Output format"
+    )
+
+    @model_validator(mode="before")
+    def collect_all_inputs(cls, values):
+        """Collect all input sources into the documents list."""
+        if isinstance(values, dict):
+            documents = values.get("documents", []) or []
+
+            # Add single image
+            if values.get("single_image"):
+                documents.append(values["single_image"])
+
+            # Add image folder
+            if values.get("image_folder"):
+                documents.append(values["image_folder"])
+
+            # Add PDF file
+            if values.get("pdf_file"):
+                documents.append(values["pdf_file"])
+
+            # Add PDF folder
+            if values.get("pdf_folder"):
+                documents.append(values["pdf_folder"])
+
+            # Update documents list
+            values["documents"] = documents
+
+        return values
+
+    @model_validator(mode="after")
+    def validate_input_provided(self):
+        """Validate that at least one input source is provided."""
+        if not self.documents:
+            raise ValueError(
+                "At least one input source must be provided (documents, single_image, image_folder, pdf_file, or pdf_folder)"
+            )
+        return self
+
+
+# Removed unused HandwritingGenerationConfig class
+
+
+# Base Workflow Result
+class DocumentTranslationConfig(BaseModel):
+    """Configuration for document translation workflow."""
+
+    input_images: Optional[List[Union[str, Path]]] = Field(
+        default=None, description="List of image files or directories to translate"
+    )
+    input_dataset: Optional[List[Dict[str, Any]]] = Field(
+        default=None, description="Input dataset with images to translate"
+    )
+    target_languages: List[str] = Field(
+        default=["hi"],
+        description="Target languages for translation (e.g., ['hi', 'zh', 'fr'])",
+    )
+    yolo_model_path: Optional[str] = Field(
+        default=None,
+        description="Path to the YOLO layout detection model (auto-downloaded if None)",
+    )
+    font_path: str = Field(
+        default="./synthdoc/fonts/",
+        description="Path to directory containing language-specific fonts",
+    )
+    confidence_threshold: float = Field(
+        default=0.4,
+        ge=0.0,
+        le=1.0,
+        description="Confidence threshold for layout detection",
+    )
+    image_size: int = Field(
+        default=1024, gt=0, description="Input image size for YOLO model"
+    )
+    preserve_layout: bool = Field(
+        default=True, description="Whether to preserve original document layout"
+    )
+    output_format: OutputFormat = Field(
+        default=OutputFormat.HUGGINGFACE, description="Output format"
+    )
+
+    @validator("target_languages")
+    def validate_languages(cls, v):
+        """Validate that at least one target language is specified."""
+        if not v:
+            raise ValueError("At least one target language must be specified")
+        return v
+
+    @validator("yolo_model_path")
+    def validate_model_path(cls, v):
+        """Validate that YOLO model path exists if provided."""
+        if v is not None and not Path(v).exists():
+            # Check if it's a non-default path that doesn't exist
+            raise ValueError(f"YOLO model path does not exist: {v}")
+        return v
+
+    @validator("font_path")
+    def validate_font_path(cls, v):
+        """Validate that font path exists."""
+        if not Path(v).exists():
+            # For the default font path, provide a helpful warning instead of failing
+            if v == "./synthdoc/fonts/":
+                print(f"⚠️  Warning: Default font path not found at {v}")
+                print(
+                    "   Please ensure SynthDoc fonts are available or provide a custom font_path parameter"
+                )
+            else:
+                raise ValueError(f"Font path does not exist: {v}")
+        return v
+
+    @validator("input_dataset")
+    def validate_input_provided(cls, v, values):
+        """Validate that either input_images or input_dataset is provided."""
+        input_images = values.get("input_images")
+        if not input_images and not v:
+            raise ValueError("Either input_images or input_dataset must be provided")
+        return v
+
+
+class WorkflowResult(BaseModel):
+    """Standard result format for all workflows."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    dataset: Any = Field(description="HuggingFace dataset or dict")
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata"
+    )
+    num_samples: int = Field(description="Number of generated samples")
+    output_files: List[str] = Field(
+        default_factory=list, description="List of generated file paths"
     )
