@@ -1,6 +1,5 @@
 # SynthDoc
 
-[![PyPI version](https://badge.fury.io/py/synthdoc.svg)](https://badge.fury.io/py/synthdoc)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 
@@ -75,13 +74,13 @@ Translate the text within a document image to one or more target languages while
 
 ### Basic Installation
 ```bash
-pip install synthdoc
+pip install git+https://github.com/adithya-s-k/SynthDoc.git
 ```
 
 ### With LLM Support (Recommended)
 To enable content generation with LLMs, install with the `llm` extra:
 ```bash
-pip install synthdoc[llm]
+pip install "git+https://github.com/adithya-s-k/SynthDoc.git[llm]"
 ```
 
 ### For Development
