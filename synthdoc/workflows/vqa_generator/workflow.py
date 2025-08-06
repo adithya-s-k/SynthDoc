@@ -10,17 +10,17 @@ from synthdoc.workflows.base import BaseWorkflow
 from synthdoc.models import VQAGenerationConfig, WorkflowResult
 from synthdoc.utils import CostTracker
 
-# Google Gemini API
+# LiteLLM for Gemini API
 try:
-    from google import genai
-    from google.genai import types
+    import litellm
     from pydantic import BaseModel, Field
     from typing import List, Optional
     import enum
+    import os
 
-    GOOGLE_GENAI_AVAILABLE = True
+    LITELLM_AVAILABLE = True
 except ImportError:
-    GOOGLE_GENAI_AVAILABLE = False
+    LITELLM_AVAILABLE = False
 
 # PDF processing imports
 try:
@@ -48,7 +48,7 @@ except ImportError:
 
 
 # Pydantic models for structured output
-if GOOGLE_GENAI_AVAILABLE:
+if LITELLM_AVAILABLE:
 
     class VQADifficulty(str, enum.Enum):
         EASY = "easy"
@@ -145,7 +145,7 @@ def pdf_to_images(pdf_path: str, output_dir: str = None) -> List[str]:
 
 
 class VQAGenerator(BaseWorkflow):
-    """Generate visual question-answering datasets with Gemini 2.5 Flash and LiteLLM integration."""
+    """Generate visual question-answering datasets using LiteLLM with Gemini models."""
 
     def __init__(
         self,
@@ -162,21 +162,27 @@ class VQAGenerator(BaseWorkflow):
         self.temp_dir.mkdir(exist_ok=True)
         self._setup_save_directory()
 
-        # Setup Google Gemini client if API key provided
-        self.gemini_client = None
-        if api_key and api_key != "your_gemini_api_key_here" and GOOGLE_GENAI_AVAILABLE:
+        # Setup LiteLLM for Gemini API access if API key provided
+        self.litellm_available = False
+        if api_key and api_key != "your_gemini_api_key_here" and LITELLM_AVAILABLE:
             try:
-                self.gemini_client = genai.Client(api_key=api_key)
-                print(f"✅ Google Gemini client initialized with model: {llm_model}")
+                # Set the Gemini API key for LiteLLM
+                os.environ["GEMINI_API_KEY"] = api_key
+                # Test the connection with a simple call
+                test_response = litellm.completion(
+                    model=f"gemini/{llm_model}",
+                    messages=[{"role": "user", "content": "Hello"}],
+                    max_tokens=5,
+                )
+                self.litellm_available = True
+                print(f"✅ LiteLLM Gemini client initialized with model: {llm_model}")
             except Exception as e:
-                print(f"⚠️ Failed to initialize Gemini client: {e}")
+                print(f"⚠️ Failed to initialize LiteLLM Gemini client: {e}")
                 print(f"   API key starts with: {api_key[:10]}...")
         elif api_key == "your_gemini_api_key_here":
             print("⚠️ Please set a valid GEMINI_API_KEY in your .env file")
-        elif api_key and not GOOGLE_GENAI_AVAILABLE:
-            print(
-                "⚠️ Google Gemini API not available. Install with: pip install google-genai"
-            )
+        elif api_key and not LITELLM_AVAILABLE:
+            print("⚠️ LiteLLM not available. Install with: pip install litellm")
         elif not api_key:
             print("⚠️ No GEMINI_API_KEY found in environment variables")
 
@@ -335,8 +341,8 @@ class VQAGenerator(BaseWorkflow):
         vqa_pairs = []
         processing_mode = "template"  # Default fallback
 
-        if self.gemini_client:
-            # Use Gemini 2.5 Flash for VQA generation - generates exactly 5 pairs
+        if self.litellm_available:
+            # Use LiteLLM with Gemini for VQA generation - generates exactly 5 pairs
             gemini_pairs = self._generate_gemini_vqa(image_path, ocr_result["text"])
 
             if gemini_pairs and len(gemini_pairs) >= 5:
@@ -411,72 +417,195 @@ class VQAGenerator(BaseWorkflow):
         return result
 
     def _generate_gemini_vqa(self, image_path: str, ocr_text: str) -> List[Dict]:
-        """Generate VQA pairs using Google Gemini API with structured output."""
+        """Generate VQA pairs using LiteLLM with Gemini API and structured output."""
         try:
             # Create the VQA generation prompt
             prompt = self._create_vqa_prompt_v2(ocr_text)
 
-            # Encode image as base64
+            # Encode image as base64 with proper MIME type
             import base64
+            from pathlib import Path
 
             with open(image_path, "rb") as f:
                 image_data = base64.b64encode(f.read()).decode("utf-8")
 
-            # Create content with image and text
-            contents = [
+            # Determine MIME type based on file extension
+            file_ext = Path(image_path).suffix.lower()
+            if file_ext in [".jpg", ".jpeg"]:
+                mime_type = "image/jpeg"
+            elif file_ext == ".png":
+                mime_type = "image/png"
+            elif file_ext == ".webp":
+                mime_type = "image/webp"
+            else:
+                mime_type = "image/jpeg"  # Default fallback
+
+            # Create messages in OpenAI format for LiteLLM
+            messages = [
                 {
-                    "parts": [
-                        {"text": prompt},
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
                         {
-                            "inline_data": {
-                                "mime_type": "image/jpeg",
-                                "data": image_data,
-                            }
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{image_data}"
+                            },
                         },
-                    ]
+                    ],
                 }
             ]
 
-            # Generate with structured output
-            response = self.gemini_client.models.generate_content(
-                model=self.llm_model,
-                contents=contents,
-                config={
-                    "response_mime_type": "application/json",
-                    "response_schema": list[VQAPair],
+            # Define the response schema for structured output
+            response_schema = {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "type": {"type": "string", "enum": ["descriptive", "mcq"]},
+                        "difficulty": {
+                            "type": "string",
+                            "enum": ["easy", "medium", "hard"],
+                        },
+                        "question": {"type": "string"},
+                        "answer": {"type": "string"},
+                        "explanation": {"type": "string"},
+                        "hard_negatives": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "choices": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": [
+                        "id",
+                        "type",
+                        "difficulty",
+                        "question",
+                        "answer",
+                        "explanation",
+                    ],
                 },
-            )
+            }
 
-            # Use the parsed structured output
-            vqa_pairs: list[VQAPair] = response.parsed
+            # Generate with structured output using LiteLLM
+            try:
+                # First try with schema validation
+                response = litellm.completion(
+                    model=f"gemini/{self.llm_model}",
+                    messages=messages,
+                    response_format={
+                        "type": "json_object",
+                        "response_schema": response_schema,
+                    },
+                    temperature=0.7,
+                    max_tokens=2000,
+                )
+            except Exception as schema_error:
+                print(f"⚠️ Schema validation failed: {schema_error}")
+                print("🔄 Retrying without schema validation...")
+                # Fallback: Try without schema validation
+                response = litellm.completion(
+                    model=f"gemini/{self.llm_model}",
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    temperature=0.7,
+                    max_tokens=2000,
+                )
+
+            # Parse the JSON response
+            response_content = response.choices[0].message.content
+            import json
+            import re
+
+            # Debug: Print the raw response for troubleshooting
             print(
-                f"✅ Generated {len(vqa_pairs)} VQA pairs with Gemini (structured output)"
+                f"🔍 Raw response content (first 500 chars): {response_content[:500]}"
             )
 
-            # Convert to dictionaries
+            # Clean and parse JSON response
+            try:
+                # First, try direct parsing
+                vqa_pairs_data = json.loads(response_content)
+            except json.JSONDecodeError as e:
+                print(f"⚠️ Direct JSON parsing failed: {e}")
+
+                # Try to extract JSON from markdown code blocks if present
+                json_match = re.search(
+                    r"```(?:json)?\s*(\[.*?\])\s*```", response_content, re.DOTALL
+                )
+                if json_match:
+                    json_str = json_match.group(1)
+                    print(f"🔍 Extracted JSON from code block: {json_str[:200]}...")
+                    try:
+                        vqa_pairs_data = json.loads(json_str)
+                    except json.JSONDecodeError:
+                        print("⚠️ Failed to parse extracted JSON, trying cleanup...")
+                        # Clean the JSON string
+                        json_str = self._clean_json_string(json_str)
+                        vqa_pairs_data = json.loads(json_str)
+                else:
+                    # Try to clean the original response and parse again
+                    print(
+                        "⚠️ No JSON code block found, attempting to clean raw response..."
+                    )
+                    cleaned_content = self._clean_json_string(response_content)
+                    vqa_pairs_data = json.loads(cleaned_content)
+
+            print(f"✅ Generated {len(vqa_pairs_data)} VQA pairs with LiteLLM Gemini")
+
+            # Ensure we have exactly the expected format
             result_pairs = []
-            for pair in vqa_pairs:
+            for pair_data in vqa_pairs_data:
                 pair_dict = {
-                    "id": pair.id,
-                    "type": pair.type.value
-                    if hasattr(pair.type, "value")
-                    else pair.type,
-                    "difficulty": pair.difficulty.value
-                    if hasattr(pair.difficulty, "value")
-                    else pair.difficulty,
-                    "question": pair.question,
-                    "answer": pair.answer,
-                    "explanation": pair.explanation,
-                    "hard_negatives": pair.hard_negatives or [],
-                    "choices": pair.choices or [],
+                    "id": pair_data.get("id", f"vqa_{len(result_pairs) + 1}"),
+                    "type": pair_data.get("type", "descriptive"),
+                    "difficulty": pair_data.get("difficulty", "medium"),
+                    "question": pair_data.get("question", ""),
+                    "answer": pair_data.get("answer", ""),
+                    "explanation": pair_data.get("explanation", ""),
+                    "hard_negatives": pair_data.get("hard_negatives", []),
+                    "choices": pair_data.get("choices", []),
                 }
                 result_pairs.append(pair_dict)
 
             return result_pairs
 
         except Exception as e:
-            print(f"⚠️ Gemini VQA generation failed: {e}")
+            print(f"⚠️ LiteLLM Gemini VQA generation failed: {e}")
+            import traceback
+
+            traceback.print_exc()
             return []
+
+    def _clean_json_string(self, json_str: str) -> str:
+        """Clean JSON string to fix common formatting issues."""
+        import re
+
+        # Remove any leading/trailing whitespace and non-JSON content
+        json_str = json_str.strip()
+
+        # Find the JSON array/object boundaries
+        start_idx = json_str.find("[")
+        end_idx = json_str.rfind("]")
+
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            json_str = json_str[start_idx : end_idx + 1]
+
+        # Fix common JSON issues
+        # Replace smart quotes with regular quotes
+        json_str = json_str.replace('"', '"').replace('"', '"')
+        json_str = json_str.replace(""", "'").replace(""", "'")
+
+        # Fix escaped newlines in strings that might cause issues
+        json_str = re.sub(r"(?<!\\)\\n", "\\\\n", json_str)
+        json_str = re.sub(r"(?<!\\)\\t", "\\\\t", json_str)
+        json_str = re.sub(r"(?<!\\)\\r", "\\\\r", json_str)
+
+        # Remove any trailing commas before closing brackets/braces
+        json_str = re.sub(r",(\s*[}\]])", r"\1", json_str)
+
+        return json_str
 
     def _create_vqa_prompt_v2(self, ocr_text: str) -> str:
         """Create VQA generation prompt for structured output."""
@@ -489,6 +618,8 @@ class VQAGenerator(BaseWorkflow):
         prompt = f"""### Visual Question Answering (VQA) Pair Generation Task
 
 You are an expert Visual Question Answering (VQA) pair generator. Analyze the provided document image and create **exactly 5 high-quality VQA pairs**.{ocr_section}
+
+**IMPORTANT: Return ONLY a valid JSON array. No markdown, no explanation, no code blocks - just the JSON array.**
 
 **Requirements:**
 
@@ -507,10 +638,25 @@ Generate **5 VQA pairs** with this distribution:
 3. **For MCQ questions**: Provide 4 "choices" (1 correct + 3 distractors)
 4. **Hard negatives/distractors** should be based on document content but incorrect
 5. Use diverse question types: factual, reasoning, numerical, comparative, etc.
+6. **Ensure all text in JSON is properly escaped** - use double quotes, escape backslashes and quotes
 
 **Question ID Format:** Use "vqa_1", "vqa_2", "vqa_3", "vqa_4", "vqa_5"
 
-Focus on the actual document content, text, data, and information rather than just visual appearance."""
+**JSON Format Example:**
+[
+  {{
+    "id": "vqa_1",
+    "type": "descriptive",
+    "difficulty": "easy",
+    "question": "What is the main topic of this document?",
+    "answer": "The main topic is...",
+    "explanation": "This can be determined by...",
+    "hard_negatives": ["Wrong answer 1", "Wrong answer 2", "Wrong answer 3", "Wrong answer 4"],
+    "choices": []
+  }}
+]
+
+Focus on the actual document content, text, data, and information rather than just visual appearance. Return ONLY the JSON array."""
 
         return prompt
 
