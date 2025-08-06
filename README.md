@@ -169,11 +169,9 @@ synth_ollama = SynthDoc(llm_model="ollama/llama2")
 -   [x] Multi-language content generation via LLMs
 -   [x] VQA generation module
 -   [x] Document translation workflow
--   [ ] **Layout Augmentation**: Programmatically alter document layouts.
+-   [x] **Layout Augmentation**: Programmatically alter document layouts.
 -   [ ] **PDF Augmentation**: Recombine elements from a corpus of PDFs to create new documents.
 -   [ ] **Handwriting Synthesis**: Generate documents with realistic handwritten fonts.
--   [ ] **Comprehensive Testing**: Increase test coverage across all workflows.
--   [ ] **Detailed Tutorials**: Create in-depth documentation and examples.
 
 ## Contributing
 
