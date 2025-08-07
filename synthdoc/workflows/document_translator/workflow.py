@@ -13,7 +13,25 @@ Supports input formats:
 Pipeline:
 1. Convert PDFs to images (if needed)
 2. YOLO layout detection to identify text regions
+
+```python
+from omnidocs.tasks.layout_analysis.extractors.doc_layout_yolo import YOLOLayoutDetector
+
+detector = YOLOLayoutDetector(show_log=True)
+annotated_image, layout_output = detector.detect(image_path)
+print(f"Detected {len(layout_output.bboxes)} elements")
+```
+
 3. OCR text extraction from detected regions
+
+```python
+from omnidocs.tasks.ocr_extraction.extractors.tesseract_ocr import TesseractOCRExtractor
+
+extractor = TesseractOCRExtractor(languages=['eng'])
+result = extractor.extract("scanned_document.png")
+print(f"Extracted text: {result.full_text[:200]}...")
+```
+
 4. Translation to target languages
 5. Font rendering with appropriate fonts for target languages
 6. Image reconstruction with translated text while preserving layout
@@ -29,6 +47,7 @@ import shutil
 from pathlib import Path
 from typing import List, Dict, Union, Optional
 import logging
+
 
 # Import SynthDoc model manager
 try:
@@ -50,37 +69,34 @@ from synthdoc.languages import Language
 
 # Optional imports with fallbacks
 try:
-    from doclayout_yolo import YOLOv10
-
+    from omnidocs.tasks.layout_analysis.extractors.doc_layout_yolo import YOLOLayoutDetector
     YOLO_AVAILABLE = True
 except ImportError:
     YOLO_AVAILABLE = False
-    print(
-        "⚠️  doclayout_yolo not available - document translation will use fallback mode"
-    )
+    print("⚠️  omnidocs YOLOLayoutDetector not available - document translation will use fallback mode")
 
 try:
-    import pytesseract
-
-    pytesseract.pytesseract.tesseract_cmd = r"tesseract"
+    from omnidocs.tasks.ocr_extraction.extractors.tesseract_ocr import TesseractOCRExtractor
     TESSERACT_AVAILABLE = True
 except ImportError:
     TESSERACT_AVAILABLE = False
-    print("⚠️  pytesseract not available - OCR will be disabled")
+    print("omnidocs TesseractOCRExtractor not available - OCR will be disabled")
 
 # Optional PDF processing
 try:
-    import fitz  # PyMuPDF
-
+    from omnidocs.tasks.text_extraction.extractors import PyMuPDFTextExtractor
     PDF_AVAILABLE = True
 except ImportError:
     try:
-        import pdf2image
-
+        import fitz  # PyMuPDF
         PDF_AVAILABLE = True
     except ImportError:
-        PDF_AVAILABLE = False
-        print("⚠️  PDF processing not available - install PyMuPDF or pdf2image")
+        try:
+            import pdf2image
+            PDF_AVAILABLE = True
+        except ImportError:
+            PDF_AVAILABLE = False
+            print("⚠️  PDF processing not available - install omnidocs or PyMuPDF or pdf2image")
 
 
 def pdf_to_images(pdf_path: str, output_dir: str = None) -> List[str]:
@@ -392,7 +408,7 @@ def fit_text_in_box(
 
 class ImageTranslator:
     """
-    Document translation pipeline using YOLO layout detection, OCR, and translation.
+    Document translation pipeline using omnidocs extractors for layout detection, OCR, and translation.
     """
 
     def __init__(
@@ -413,10 +429,16 @@ class ImageTranslator:
         self.imgsz = imgsz
         self.logger = logger or logging.getLogger(__name__)
 
+        # Initialize omnidocs extractors
+        if YOLO_AVAILABLE:
+            self.layout_detector = YOLOLayoutDetector(show_log=False)
+        if TESSERACT_AVAILABLE:
+            self.ocr_extractor = TesseractOCRExtractor(languages=['eng'])
+
         # Initialize outputs for each language
         self.output = {lang: {} for lang in self.langs}
 
-        # Layout class mapping for YOLO detection
+        # Layout class mapping for detection
         self.class_mapping = {
             "plain text": "text",
             "title": "title",
@@ -427,53 +449,73 @@ class ImageTranslator:
         }
         self.translatable_classes = ["plain text", "title", "figure_caption"]
 
-    def detect_and_ocr_image(self, cv2_image, results):
-        """Process layout detection and OCR for an image once"""
+    def detect_and_ocr_image(self, image_path, cv2_image):
+        """Process layout detection and OCR for an image using omnidocs extractors"""
         regions = []
 
-        for i, box in enumerate(results.boxes):
-            bbox = box.xyxy[0].cpu().numpy()
-            xmin, ymin, xmax, ymax = map(int, bbox)
+        # Use omnidocs layout detector
+        if YOLO_AVAILABLE:
+            try:
+                annotated_image, layout_output = self.layout_detector.detect(image_path)
+                
+                for i, bbox in enumerate(layout_output.bboxes):
+                    xmin, ymin, xmax, ymax = map(int, bbox.bbox)
+                    class_name = bbox.label
+                    confidence = bbox.confidence
 
-            class_id = int(box.cls[0])
-            class_name = results.names[class_id]
+                    if confidence < self.conf:
+                        continue
 
-            if class_name not in self.class_mapping:
-                continue
+                    if class_name not in self.class_mapping:
+                        continue
 
-            mapped_class_name = self.class_mapping[class_name]
-            region_data = {
-                "region_id": i + 1,
-                "layout_type": mapped_class_name,
-                "bbox": {
-                    "xmin": int(xmin),
-                    "ymin": int(ymin),
-                    "xmax": int(xmax),
-                    "ymax": int(ymax),
-                },
-            }
+                    mapped_class_name = self.class_mapping.get(class_name, class_name)
+                    region_data = {
+                        "region_id": i + 1,
+                        "layout_type": mapped_class_name,
+                        "bbox": {
+                            "xmin": int(xmin),
+                            "ymin": int(ymin),
+                            "xmax": int(xmax),
+                            "ymax": int(ymax),
+                        },
+                    }
 
-            if class_name in self.translatable_classes:
-                roi = cv2_image[ymin:ymax, xmin:xmax]
-                if roi.size == 0:
-                    continue
+                    if class_name in self.translatable_classes:
+                        roi = cv2_image[ymin:ymax, xmin:xmax]
+                        if roi.size == 0:
+                            continue
 
-                gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                _, binary = cv2.threshold(
-                    gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
-                )
-                text = pytesseract.image_to_string(
-                    binary, config="--oem 3 --psm 6"
-                ).strip()
+                        # Use omnidocs OCR extractor
+                        if TESSERACT_AVAILABLE:
+                            # Save ROI temporarily for OCR
+                            temp_roi_path = f"temp_roi_{i}.png"
+                            cv2.imwrite(temp_roi_path, roi)
+                            
+                            try:
+                                ocr_result = self.ocr_extractor.extract(temp_roi_path)
+                                text = ocr_result.full_text.strip() if ocr_result.full_text else ""
+                                
+                                # Clean up temp file
+                                if os.path.exists(temp_roi_path):
+                                    os.remove(temp_roi_path)
+                                    
+                                if text:
+                                    region_data["english_text"] = text
+                                    regions.append(region_data)
+                            except Exception as e:
+                                self.logger.warning(f"OCR extraction failed for region {i}: {e}")
+                                # Clean up temp file in case of error
+                                if os.path.exists(temp_roi_path):
+                                    os.remove(temp_roi_path)
 
-                if text:
-                    region_data["english_text"] = text
-                    regions.append(region_data)
+            except Exception as e:
+                self.logger.error(f"Layout detection failed: {e}")
 
         return regions
 
-    def process_single_image(self, idx, input_img):
-        """Process a single image with optimized language handling"""
+    def process_single_image(self, idx, input_img, image_path):
+        """Process a single image with optimized language handling using omnidocs extractors"""
         image = (
             input_img
             if isinstance(input_img, Image.Image)
@@ -481,11 +523,7 @@ class ImageTranslator:
         )
         cv2_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 
-        model = YOLOv10(self.model_path)
-        det_res = model.predict(
-            cv2_image, imgsz=self.imgsz, conf=self.conf, device="cpu"
-        )
-        regions = self.detect_and_ocr_image(cv2_image, det_res[0])
+        regions = self.detect_and_ocr_image(image_path, cv2_image)
 
         for lang in self.langs:
             try:
@@ -580,8 +618,8 @@ class DocumentTranslator(BaseWorkflow):
     Document Translation Workflow for SynthDoc.
 
     Translates documents to different languages while preserving layout using:
-    - YOLO for layout detection
-    - OCR for text extraction
+    - omnidocs YOLOLayoutDetector for layout detection
+    - omnidocs TesseractOCRExtractor for text extraction
     - Translation APIs for text conversion
     - Smart font rendering for target languages
 
@@ -721,7 +759,7 @@ class DocumentTranslator(BaseWorkflow):
 
                 # Load and process image
                 image = Image.open(image_path)
-                json_output = image_translator.process_single_image(idx, image)
+                json_output = image_translator.process_single_image(idx, image, str(image_path))
                 translations = json.loads(json_output)
 
                 # Save results for each language
