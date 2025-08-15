@@ -614,6 +614,75 @@ class DocumentTranslationConfig(BaseModel):
         return v
 
 
+class AugmentationConfig(BaseModel):
+    """Configuration for document augmentation."""
+    
+    augmentations: Union[List[str], Dict[str, float]] = Field(
+        default_factory=lambda: ["brightness", "folding", "original"],
+        description="List of augmentations or dict with custom ratios"
+    )
+    original_ratio: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0, 
+        description="Ratio of images to keep as original (when using list mode)"
+    )
+    max_samples: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Maximum number of images to process"
+    )
+    random_seed: Optional[int] = Field(
+        default=None,
+        description="Random seed for reproducible results"
+    )
+    preserve_metadata: bool = Field(
+        default=True,
+        description="Preserve original dataset metadata"
+    )
+    add_augmentation_metadata: bool = Field(
+        default=True,
+        description="Add augmentation type and timing metadata"
+    )
+    output_format: str = Field(
+        default="dataset",
+        description="Output format: 'dataset' or 'folder'"
+    )
+
+    @validator("augmentations")
+    def validate_augmentations(cls, v):
+        """Validate augmentation configuration."""
+        from .augmentation.config import AVAILABLE_AUGMENTATIONS
+        
+        if isinstance(v, list):
+            # Validate list of augmentation names
+            invalid_augs = [
+                aug for aug in v 
+                if aug != "original" and aug not in AVAILABLE_AUGMENTATIONS
+            ]
+            if invalid_augs:
+                raise ValueError(f"Unsupported augmentations: {invalid_augs}")
+        
+        elif isinstance(v, dict):
+            # Validate custom ratios
+            if not all(isinstance(ratio, (int, float)) for ratio in v.values()):
+                raise ValueError("All augmentation ratios must be numeric")
+            
+            total_ratio = sum(v.values())
+            if abs(total_ratio - 1.0) > 0.001:
+                raise ValueError(f"Augmentation ratios must sum to 1.0, got {total_ratio}")
+            
+            # Validate augmentation names
+            invalid_augs = [
+                aug for aug in v.keys()
+                if aug != "original" and aug not in AVAILABLE_AUGMENTATIONS  
+            ]
+            if invalid_augs:
+                raise ValueError(f"Unsupported augmentations: {invalid_augs}")
+        
+        return v
+
+
 class WorkflowResult(BaseModel):
     """Standard result format for all workflows."""
 

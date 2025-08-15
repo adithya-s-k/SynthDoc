@@ -19,6 +19,7 @@ from .models_manager import (
     is_model_downloaded,
     cleanup_models,
 )
+from .models import AugmentationConfig
 
 app = typer.Typer(
     name="synthdoc",
@@ -295,6 +296,84 @@ def clean_models(
             console.print("[green]✅ Removed all models[/green]")
     except Exception as e:
         console.print(f"[red]❌ Error: {e}[/red]")
+
+
+@app.command()
+def augment(
+    input_path: str = typer.Argument(..., help="Input dataset folder or HuggingFace dataset path"),
+    output: str = typer.Option("./augmented", "--output", "-o", help="Output directory"),
+    augmentations: List[str] = typer.Option(
+        ["brightness", "folding", "original"], 
+        "--augmentations", "-a", 
+        help="Augmentation types to apply"
+    ),
+    preset: Optional[str] = typer.Option(
+        None, "--preset", "-p", 
+        help="Use preset: light, balanced, heavy, document_quality"
+    ),
+    original_ratio: float = typer.Option(
+        0.3, "--original-ratio", help="Ratio of images to keep as original"
+    ),
+    max_samples: Optional[int] = typer.Option(
+        None, "--max-samples", help="Maximum number of images to process"
+    ),
+    seed: Optional[int] = typer.Option(
+        None, "--seed", help="Random seed for reproducible results"
+    ),
+):
+    """Apply augmentations to existing datasets or image folders."""
+    console.print(f"[green]Applying augmentations to {input_path}[/green]")
+    
+    # Handle preset selection
+    if preset:
+        from .augmentation import (
+            LIGHT_AUGMENTATIONS, 
+            BALANCED_AUGMENTATIONS, 
+            HEAVY_AUGMENTATIONS,
+            DOCUMENT_QUALITY_AUGMENTATIONS
+        )
+        
+        preset_map = {
+            "light": LIGHT_AUGMENTATIONS,
+            "balanced": BALANCED_AUGMENTATIONS, 
+            "heavy": HEAVY_AUGMENTATIONS,
+            "document_quality": DOCUMENT_QUALITY_AUGMENTATIONS,
+        }
+        
+        if preset not in preset_map:
+            console.print(f"[red]Unknown preset: {preset}[/red]")
+            console.print(f"Available presets: {', '.join(preset_map.keys())}")
+            raise typer.Exit(1)
+        
+        augmentations = preset_map[preset]
+        console.print(f"[blue]Using preset '{preset}': {augmentations}[/blue]")
+    
+    try:
+        synth = SynthDoc(output_dir=output)
+        
+        # Check if input is a folder or dataset
+        input_path_obj = Path(input_path)
+        if input_path_obj.is_dir():
+            # Process image folder
+            result = synth.apply_augmentations(
+                input_data=input_path,
+                augmentations=augmentations,
+                original_ratio=original_ratio,
+                max_samples=max_samples,
+                random_seed=seed,
+                output_folder=output
+            )
+        else:
+            # Try to load as dataset (future enhancement)
+            console.print("[yellow]Dataset input not yet supported. Use image folder for now.[/yellow]")
+            raise typer.Exit(1)
+        
+        console.print(f"[green]✓ Applied augmentations to {len(result)} images[/green]")
+        console.print(f"[blue]Output saved to: {output}[/blue]")
+        
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
 
 
 def main():

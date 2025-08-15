@@ -14,6 +14,7 @@ from .models import (
     RawDocumentGenerationConfig,
     VQAGenerationConfig,
     DocumentTranslationConfig,
+    AugmentationConfig,
 )
 from .utils import setup_logging
 from .config import load_env_config, get_api_key, get_llm_model
@@ -454,3 +455,91 @@ class SynthDoc:
         except Exception as e:
             # Don't fail initialization if model checking fails
             self.logger.debug(f"Could not check model status: {e}")
+
+    def apply_augmentations(
+        self,
+        input_data: Union[Dataset, str, Path],
+        augmentations: Union[List[str], Dict[str, float], str] = None,
+        original_ratio: float = 0.3,
+        max_samples: Optional[int] = None,
+        random_seed: Optional[int] = None,
+        output_folder: Optional[Union[str, Path]] = None,
+        image_column: Optional[str] = None,
+    ) -> Dataset:
+        """
+        Apply augmentations to a dataset or image folder.
+        
+        This method acts as a filter/processor that takes existing data and applies
+        document augmentations to create variations for training robust models.
+        
+        Args:
+            input_data: HuggingFace Dataset or path to image folder
+            augmentations: List of augmentations, dict with ratios, or preset name
+                          (e.g., ["brightness", "folding"] or {"brightness": 0.4, "original": 0.6})
+            original_ratio: Ratio of images to keep as original when using list mode
+            max_samples: Maximum number of images to process
+            random_seed: Random seed for reproducible results
+            output_folder: Output folder for augmented images (only for folder input)
+            image_column: Name of image column in dataset (auto-detected if None)
+            
+        Returns:
+            HuggingFace Dataset with augmented images
+            
+        Examples:
+            >>> # Augment existing dataset
+            >>> dataset = synthdoc.generate_raw_docs(language="en", pages=100)
+            >>> augmented = synthdoc.apply_augmentations(
+            ...     input_data=dataset,
+            ...     augmentations=["brightness", "folding", "original"]
+            ... )
+            
+            >>> # Augment images from folder  
+            >>> augmented = synthdoc.apply_augmentations(
+            ...     input_data="./my_images/",
+            ...     augmentations={"brightness": 0.4, "original": 0.6},
+            ...     output_folder="./augmented_images/"
+            ... )
+            
+            >>> # Use preset
+            >>> from synthdoc.augmentation import BALANCED_AUGMENTATIONS
+            >>> augmented = synthdoc.apply_augmentations(
+            ...     input_data=dataset,
+            ...     augmentations=BALANCED_AUGMENTATIONS
+            ... )
+        """
+        self.logger.info("Applying document augmentations")
+        
+        # Import here to avoid circular imports
+        from .augmentation import AugmentationProcessor
+        
+        # Create configuration
+        config = AugmentationConfig(
+            augmentations=augmentations or ["brightness", "folding", "original"],
+            original_ratio=original_ratio,
+            max_samples=max_samples,
+            random_seed=random_seed,
+            preserve_metadata=True,
+            add_augmentation_metadata=True,
+        )
+        
+        # Initialize processor
+        processor = AugmentationProcessor()
+        
+        # Process based on input type
+        if isinstance(input_data, Dataset):
+            # Process HuggingFace dataset
+            return processor.process_dataset(
+                dataset=input_data,
+                config=config,
+                image_column=image_column
+            )
+        else:
+            # Process image folder
+            if output_folder is None:
+                output_folder = self.output_dir / "augmented_images"
+            
+            return processor.process_folder(
+                input_folder=input_data,
+                output_folder=output_folder,
+                config=config
+            )

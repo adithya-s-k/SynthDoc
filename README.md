@@ -10,6 +10,7 @@ A comprehensive library for generating synthetic documents designed for training
 -   🌐 **Multi-language Document Generation**: Create documents in various languages using LLMs.
 -   ❓ **VQA Dataset Generation**: Produce rich Visual Question Answering datasets with hard negatives for robust model training.
 -   🔄 **Document Translation**: Translate the text in documents to other languages while preserving the original layout.
+-   🎨 **Document Augmentation**: Apply realistic document distortions (brightness, aging, folding, watermarks) with pythonic configuration.
 -   🧩 **HuggingFace Integration**: Outputs datasets directly in HuggingFace `Dataset` format for seamless integration with your ML pipelines.
 -   ⚙️ **Flexible Configuration**: Easily configure LLM providers (OpenAI, Groq, Anthropic, Ollama) and API keys using a `.env` file.
 -   🚀 **Extensible Workflows**: A modular architecture that makes it easy to add new document generation and augmentation workflows.
@@ -69,6 +70,30 @@ Translate the text within a document image to one or more target languages while
 4.  **Rendering**: The translated text is rendered back onto a copy of the original image in the same location, using appropriate fonts.
 
 **Output**: A HuggingFace dataset containing the translated document images.
+
+---
+
+### 4. Document Augmentation
+
+Apply realistic document distortions and variations to existing datasets or image folders to improve model robustness.
+
+**Purpose**: Create visually diverse versions of existing documents to train more robust models that can handle real-world document variations.
+
+**Process**:
+1. **Input Processing**: Accept HuggingFace datasets or image folders as input.
+2. **Augmentation Application**: Apply document-specific augmentations like brightness changes, paper aging, folding effects, watermarks, etc.
+3. **Distribution Control**: Configure the ratio of different augmentations applied across the dataset.
+4. **Output Generation**: Return augmented dataset while preserving original metadata.
+
+**Available Augmentations**:
+- `brightness`, `colorshift`, `folding`, `watermark`, `bleedthrough`, `dirtydrum`, `shadowcast`, `squish`, and many more
+- Predefined presets: `LIGHT_AUGMENTATIONS`, `BALANCED_AUGMENTATIONS`, `HEAVY_AUGMENTATIONS`, `DOCUMENT_QUALITY_AUGMENTATIONS`
+
+**Output Schema** (extends input dataset):
+- All original fields preserved
+- `augmentation_type`: Type of augmentation applied
+- `augmentation_success`: Whether augmentation was successful
+- `processing_time`: Time taken for augmentation
 
 ## Installation
 
@@ -149,6 +174,33 @@ translated_dataset = synth.translate_documents(
 )
 print(f"Translated documents into {len(translated_dataset)} language versions.")
 print(translated_dataset)
+
+
+# --- Workflow 4: Apply Document Augmentations ---
+print("\nApplying document augmentations...")
+# Apply augmentations to any existing dataset
+augmented_dataset = synth.apply_augmentations(
+    input_data=raw_dataset,
+    augmentations=["brightness", "folding", "watermark", "original"],
+    original_ratio=0.3  # 30% kept as original
+)
+print(f"Applied augmentations to {len(augmented_dataset)} images.")
+print(f"Augmentation types: {set(augmented_dataset['augmentation_type'])}")
+
+# Or use predefined presets
+from synthdoc.augmentation import BALANCED_AUGMENTATIONS
+balanced_augmented = synth.apply_augmentations(
+    input_data=vqa_dataset,
+    augmentations=BALANCED_AUGMENTATIONS
+)
+
+# Apply to image folder directly
+folder_augmented = synth.apply_augmentations(
+    input_data="./my_images/",
+    augmentations={"brightness": 0.4, "original": 0.6},
+    output_folder="./augmented_images/",
+    max_samples=100
+)
 ```
 
 ### Manual Configuration (Not Recommended)
@@ -163,12 +215,57 @@ synth_manual = SynthDoc(llm_model="groq/llama-3-8b-8192", api_key="your-groq-key
 synth_ollama = SynthDoc(llm_model="ollama/llama2")
 ```
 
+## CLI Usage
+
+SynthDoc provides a convenient command-line interface for all workflows:
+
+### Generate Documents
+```bash
+# Generate documents with default settings
+synthdoc generate --lang en --pages 5 --output ./my_docs
+
+# Generate with custom model
+synthdoc generate --lang hi --pages 10 --model gpt-4o-mini --output ./hindi_docs
+```
+
+### Apply Augmentations
+```bash
+# Apply augmentations to image folder
+synthdoc augment ./my_images/ --output ./augmented --preset balanced
+
+# Custom augmentation list
+synthdoc augment ./my_images/ --augmentations brightness folding watermark original --max-samples 100
+
+# Use presets
+synthdoc augment ./my_images/ --preset light --seed 42
+synthdoc augment ./my_images/ --preset heavy --original-ratio 0.2
+```
+
+### Generate VQA
+```bash
+# Generate VQA from documents
+synthdoc vqa ./documents/ --output ./vqa_dataset --type factual reasoning
+```
+
+### Model Management
+```bash
+# List available models
+synthdoc list-models
+
+# Download specific model
+synthdoc download-models doclayout-yolo
+
+# Get model info
+synthdoc model-info doclayout-yolo
+```
+
 ## Roadmap
 
 -   [x] Core document generation pipeline
 -   [x] Multi-language content generation via LLMs
 -   [x] VQA generation module
 -   [x] Document translation workflow
+-   [x] **Document Augmentation**: Apply realistic document distortions with pythonic configuration.
 -   [x] **Layout Augmentation**: Programmatically alter document layouts.
 -   [ ] **PDF Augmentation**: Recombine elements from a corpus of PDFs to create new documents.
 -   [ ] **Handwriting Synthesis**: Generate documents with realistic handwritten fonts.

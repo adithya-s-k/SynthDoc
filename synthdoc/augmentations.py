@@ -1,491 +1,573 @@
+#!/usr/bin/env python3
 """
-Document augmentation utilities.
+Image Augmentation Script using Augraphy
+=========================================
 
-This module provides various augmentation techniques for documents including
-visual transformations, noise addition, and layout modifications.
+This script applies various document augmentations to images in a folder and creates
+augmented copies with configurable ratios. It uses the Augraphy library for
+realistic document distortions.
+
+Usage:
+    python augmentation.py --input_folder ./images --output_folder ./augmented_images
 """
 
-from typing import List, Dict, Any, Optional, Tuple, Union
-import logging
-from enum import Enum
-import numpy as np
+import os
+import argparse
+import random
+import shutil
+import time
 from pathlib import Path
+from typing import Dict, List, Tuple
+import cv2
+import numpy as np
+from tqdm import tqdm
+from augraphy import *
 
-try:
-    from PIL import Image, ImageEnhance, ImageFilter
-    import numpy as np
-    PIL_AVAILABLE = True
-except ImportError:
-    PIL_AVAILABLE = False
-
-try:
-    import cv2
-    CV2_AVAILABLE = True
-except ImportError:
-    CV2_AVAILABLE = False
-
-
-class AugmentationType(Enum):
-    """Available augmentation techniques."""
-
-    ROTATION = "rotation"
-    SCALING = "scaling"
-    CROPPING = "cropping"
-    NOISE = "noise"
-    BRIGHTNESS = "brightness"
-    CONTRAST = "contrast"
-    BLUR = "blur"
-    PERSPECTIVE = "perspective"
-    ELASTIC = "elastic"
-    COLOR_SHIFT = "color_shift"
+# Performance data for available augmentations only (Img/sec)
+PERFORMANCE_DATA = {
+    "BleedThrough": 0.58,
+    "Brightness": 4.92,
+    "BrightnessTexturize": 1.83,
+    "ColorPaper": 4.83,
+    "ColorShift": 0.79,
+    "DirtyDrum": 0.83,
+    "DirtyRollers": 1.47,
+    "Folding": 3.18,
+    "InkColorSwap": 3.47,
+    "InkMottling": 5.41,
+    "Letterpress": 0.35,
+    "LightingGradient": 0.37,
+    "LinesDegradation": 1.28,
+    "LowInkPeriodicLines": 5.17,
+    "Markup": 2.33,
+    "NoiseTexturize": 0.83,
+    "NoisyLines": 0.89,
+    "PatternGenerator": 0.76,
+    "Scribbles": 1.11,
+    "ShadowCast": 0.75,
+    "Squish": 0.72,
+    "WaterMark": 2.09,
+}
 
 
-class Augmentor:
-    """Document augmentation engine with actual image processing implementations."""
+def calculate_custom_distribution_weights():
+    """Calculate custom weights for augmentations with equal distribution."""
+    # Get all available augmentation types (convert to lowercase)
+    aug_types = []
+    for aug_type in PERFORMANCE_DATA.keys():
+        normalized_name = aug_type.lower()
+        aug_types.append(normalized_name)
 
-    def __init__(self):
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.available_augmentations = [aug.value for aug in AugmentationType]
-        
-        if not PIL_AVAILABLE:
-            self.logger.warning("PIL not available. Some augmentations will be limited.")
-        if not CV2_AVAILABLE:
-            self.logger.warning("OpenCV not available. Some augmentations will be limited.")
+    # Original gets 300 (30%), remaining 700 distributed equally among available augmentations
+    original_weight = 300
+    remaining_weight = 1000 - original_weight
 
-    def apply_augmentations(
-        self,
-        documents: List[Dict[str, Any]],
-        augmentations: List[str],
-        intensity: float = 0.5,
-    ) -> List[Dict[str, Any]]:
-        """
-        Apply augmentations to a list of documents.
+    # Distribute remaining weight equally among all available augmentations
+    equal_weight = remaining_weight // len(aug_types)
+    remainder = remaining_weight % len(aug_types)
 
-        Args:
-            documents: List of documents to augment
-            augmentations: List of augmentation types to apply
-            intensity: Augmentation intensity (0.0 to 1.0)
+    # Create weights dictionary
+    weights = {}
 
-        Returns:
-            List of augmented documents
-        """
-        self.logger.info(
-            f"Applying {len(augmentations)} augmentations to {len(documents)} documents"
-        )
+    # Assign equal weights to all augmentations
+    for i, aug_type in enumerate(aug_types):
+        # Distribute remainder among first few augmentations
+        extra = 1 if i < remainder else 0
+        weights[aug_type] = equal_weight + extra
 
-        augmented_docs = []
+    return weights
 
-        for doc in documents:
-            for aug_type in augmentations:
-                if aug_type in self.available_augmentations:
-                    augmented_doc = self._apply_single_augmentation(
-                        doc, aug_type, intensity
-                    )
-                    if augmented_doc:
-                        augmented_docs.append(augmented_doc)
-                else:
-                    self.logger.warning(f"Unknown augmentation type: {aug_type}")
 
-        return augmented_docs
+# Calculate the weights
+calculated_weights = calculate_custom_distribution_weights()
 
-    def _apply_single_augmentation(
-        self, document: Dict[str, Any], augmentation: str, intensity: float
-    ) -> Optional[Dict[str, Any]]:
-        """Apply a single augmentation to a document."""
-        image = document.get("image")
+# Augmentation configuration with original at 30% and rest distributed equally
+AUGMENTATION_CONFIG = {
+    "original": 300,  # 30% kept as original
+    **calculated_weights,
+}
+
+# Verify the ratios add up to 1000
+assert sum(AUGMENTATION_CONFIG.values()) == 1000, (
+    f"Ratios must sum to 1000, got {sum(AUGMENTATION_CONFIG.values())}"
+)
+
+
+def get_augmentation_pipeline(aug_type: str):
+    """
+    Get the augmentation pipeline for a specific augmentation type.
+    Only includes augmentations that are confirmed to be available.
+
+    Args:
+        aug_type: The type of augmentation to apply
+
+    Returns:
+        Augraphy pipeline object
+    """
+    pipelines = {
+        "bleedthrough": BleedThrough(),
+        "brightness": Brightness(),
+        "brightnesstexturize": BrightnessTexturize(),
+        "colorpaper": ColorPaper(),
+        "colorshift": ColorShift(),
+        "dirtydrum": DirtyDrum(),
+        "dirtyrollers": DirtyRollers(),
+        "folding": Folding(),
+        "inkcolorswap": InkColorSwap(),
+        "inkmottling": InkMottling(),
+        "letterpress": Letterpress(),
+        "lightinggradient": LightingGradient(),
+        "linesdegradation": LinesDegradation(),
+        "lowinkperiodiclines": LowInkPeriodicLines(),
+        "markup": Markup(),
+        "noisetexturize": NoiseTexturize(),
+        "noisylines": NoisyLines(),
+        "patterngenerator": PatternGenerator(),
+        "scribbles": Scribbles(),
+        "shadowcast": ShadowCast(),
+        "squish": Squish(),
+        "watermark": WaterMark(),
+    }
+
+    return pipelines.get(aug_type, None)
+
+
+def get_supported_image_extensions():
+    """Get list of supported image file extensions."""
+    return {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
+
+
+def load_image(image_path: str) -> np.ndarray:
+    """
+    Load an image from file path.
+
+    Args:
+        image_path: Path to the image file
+
+    Returns:
+        Loaded image as numpy array
+    """
+    try:
+        image = cv2.imread(image_path)
         if image is None:
-            self.logger.warning(f"No image found in document {document.get('id')}")
-            return None
-        
-        try:
-            # Apply the specific augmentation
-            if augmentation == AugmentationType.ROTATION.value:
-                augmented_image = self.apply_rotation(image, intensity)
-            elif augmentation == AugmentationType.SCALING.value:
-                augmented_image = self.apply_scaling(image, intensity)
-            elif augmentation == AugmentationType.CROPPING.value:
-                augmented_image = self.apply_cropping(image, intensity)
-            elif augmentation == AugmentationType.NOISE.value:
-                augmented_image = self.apply_noise(image, intensity)
-            elif augmentation == AugmentationType.BRIGHTNESS.value:
-                augmented_image = self.apply_brightness(image, intensity)
-            elif augmentation == AugmentationType.CONTRAST.value:
-                augmented_image = self.apply_contrast(image, intensity)
-            elif augmentation == AugmentationType.BLUR.value:
-                augmented_image = self.apply_blur(image, intensity)
-            elif augmentation == AugmentationType.PERSPECTIVE.value:
-                augmented_image = self.apply_perspective(image, intensity)
-            elif augmentation == AugmentationType.ELASTIC.value:
-                augmented_image = self.apply_elastic(image, intensity)
-            elif augmentation == AugmentationType.COLOR_SHIFT.value:
-                augmented_image = self.apply_color_shift(image, intensity)
-            else:
-                self.logger.warning(f"Unsupported augmentation: {augmentation}")
-                return None
-            
-            # Create augmented document
-            augmented_doc = document.copy()
-            augmented_doc["image"] = augmented_image
-            augmented_doc["augmentation"] = {
-                "type": augmentation,
-                "intensity": intensity,
-                "original_id": document.get("id"),
-            }
+            raise ValueError(f"Could not load image: {image_path}")
+        return image
+    except Exception as e:
+        print(f"Error loading image {image_path}: {e}")
+        return None
 
-            # Update document ID to reflect augmentation
-            original_id = document.get("id", "unknown")
-            augmented_doc["id"] = f"{original_id}_{augmentation}"
-            
-            # Update metadata if present
-            if "metadata" in augmented_doc:
-                augmented_doc["metadata"]["augmentation"] = {
-                    "type": augmentation,
-                    "intensity": intensity,
-                    "image_width": augmented_image.width,
-                    "image_height": augmented_image.height,
-                }
 
-            return augmented_doc
-            
-        except Exception as e:
-            self.logger.error(f"Failed to apply {augmentation}: {e}")
-            return None
+def save_image(image: np.ndarray, output_path: str) -> bool:
+    """
+    Save an image to file.
 
-    def apply_rotation(self, image: Union[Image.Image, np.ndarray], intensity: float = 0.5) -> Image.Image:
-        """Apply rotation augmentation."""
-        if not PIL_AVAILABLE:
-            self.logger.warning("PIL not available for rotation")
-            return image
-        
-        # Convert to PIL if needed
-        if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        
-        # Calculate rotation angle based on intensity (-15 to 15 degrees)
-        max_angle = 15
-        angle = np.random.uniform(-max_angle * intensity, max_angle * intensity)
-        
-        self.logger.debug(f"Applying rotation: {angle:.2f} degrees")
-        
-        # Apply rotation with white background
-        rotated = image.rotate(angle, expand=True, fillcolor='white')
-        return rotated
+    Args:
+        image: Image array to save
+        output_path: Output file path
 
-    def apply_scaling(self, image: Union[Image.Image, np.ndarray], intensity: float = 0.5) -> Image.Image:
-        """Apply scaling augmentation."""
-        if not PIL_AVAILABLE:
-            self.logger.warning("PIL not available for scaling")
-            return image
-        
-        # Convert to PIL if needed
-        if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        
-        # Calculate scale factor based on intensity (0.8 to 1.2)
-        min_scale = 1.0 - 0.2 * intensity
-        max_scale = 1.0 + 0.2 * intensity
-        scale = np.random.uniform(min_scale, max_scale)
-        
-        self.logger.debug(f"Applying scaling: {scale:.2f}")
-        
-        # Apply scaling
-        new_width = int(image.width * scale)
-        new_height = int(image.height * scale)
-        scaled = image.resize((new_width, new_height), Image.LANCZOS)
-        
-        return scaled
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        success = cv2.imwrite(output_path, image)
+        return success
+    except Exception as e:
+        print(f"Error saving image to {output_path}: {e}")
+        return False
 
-    def apply_cropping(self, image: Union[Image.Image, np.ndarray], intensity: float = 0.5) -> Image.Image:
-        """Apply random cropping augmentation."""
-        if not PIL_AVAILABLE:
-            self.logger.warning("PIL not available for cropping")
-            return image
-        
-        # Convert to PIL if needed
-        if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        
-        # Calculate crop size based on intensity (keep 70%-95% of original)
-        crop_ratio = 1.0 - (0.3 * intensity)
-        new_width = int(image.width * crop_ratio)
-        new_height = int(image.height * crop_ratio)
-        
-        # Random crop position
-        max_x = image.width - new_width
-        max_y = image.height - new_height
-        left = np.random.randint(0, max(1, max_x))
-        top = np.random.randint(0, max(1, max_y))
-        
-        self.logger.debug(f"Applying cropping: {new_width}x{new_height} at ({left}, {top})")
-        
-        # Apply crop
-        cropped = image.crop((left, top, left + new_width, top + new_height))
-        
-        # Resize back to original size
-        resized = cropped.resize((image.width, image.height), Image.LANCZOS)
-        
-        return resized
 
-    def apply_noise(self, image: Union[Image.Image, np.ndarray], intensity: float = 0.5) -> Image.Image:
-        """Apply noise augmentation."""
-        if not PIL_AVAILABLE:
-            self.logger.warning("PIL not available for noise")
-            return image
-        
-        # Convert to PIL if needed
-        if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        
-        # Convert to numpy for noise application
-        img_array = np.array(image)
-        
-        # Calculate noise level based on intensity
-        noise_level = 25 * intensity  # Max noise standard deviation of 25
-        
-        self.logger.debug(f"Applying noise: level {noise_level:.2f}")
-        
-        # Generate and apply noise
-        noise = np.random.normal(0, noise_level, img_array.shape).astype(np.float32)
-        noisy_array = np.clip(img_array.astype(np.float32) + noise, 0, 255).astype(np.uint8)
-        
-        return Image.fromarray(noisy_array)
+def generate_augmentation_plan(total_images: int, config: Dict[str, int]) -> List[str]:
+    """
+    Generate a plan for which augmentation to apply to each image.
 
-    def apply_brightness(self, image: Union[Image.Image, np.ndarray], intensity: float = 0.5) -> Image.Image:
-        """Apply brightness augmentation."""
-        if not PIL_AVAILABLE:
-            self.logger.warning("PIL not available for brightness")
-            return image
-        
-        # Convert to PIL if needed
-        if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        
-        # Calculate brightness factor based on intensity (0.5 to 1.5)
-        min_factor = 1.0 - 0.5 * intensity
-        max_factor = 1.0 + 0.5 * intensity
-        factor = np.random.uniform(min_factor, max_factor)
-        
-        self.logger.debug(f"Applying brightness: factor {factor:.2f}")
-        
-        # Apply brightness enhancement
-        enhancer = ImageEnhance.Brightness(image)
-        enhanced = enhancer.enhance(factor)
-        
-        return enhanced
+    Args:
+        total_images: Total number of input images
+        config: Configuration dictionary with augmentation ratios
 
-    def apply_contrast(self, image: Union[Image.Image, np.ndarray], intensity: float = 0.5) -> Image.Image:
-        """Apply contrast augmentation."""
-        if not PIL_AVAILABLE:
-            self.logger.warning("PIL not available for contrast")
-            return image
-        
-        # Convert to PIL if needed
-        if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        
-        # Calculate contrast factor based on intensity (0.5 to 1.5)
-        min_factor = 1.0 - 0.5 * intensity
-        max_factor = 1.0 + 0.5 * intensity
-        factor = np.random.uniform(min_factor, max_factor)
-        
-        self.logger.debug(f"Applying contrast: factor {factor:.2f}")
-        
-        # Apply contrast enhancement
-        enhancer = ImageEnhance.Contrast(image)
-        enhanced = enhancer.enhance(factor)
-        
-        return enhanced
+    Returns:
+        List of augmentation types for each image
+    """
+    plan = []
 
-    def apply_blur(self, image: Union[Image.Image, np.ndarray], intensity: float = 0.5) -> Image.Image:
-        """Apply blur augmentation."""
-        if not PIL_AVAILABLE:
-            self.logger.warning("PIL not available for blur")
-            return image
-        
-        # Convert to PIL if needed
-        if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        
-        # Calculate blur radius based on intensity
-        max_radius = 3.0
-        radius = max_radius * intensity
-        
-        self.logger.debug(f"Applying blur: radius {radius:.2f}")
-        
-        if radius > 0.1:  # Only apply if radius is meaningful
-            blurred = image.filter(ImageFilter.GaussianBlur(radius=radius))
-            return blurred
+    # Calculate actual counts based on ratios
+    for aug_type, ratio in config.items():
+        count = int((ratio / 1000.0) * total_images)
+        plan.extend([aug_type] * count)
+
+    # Handle any rounding differences
+    while len(plan) < total_images:
+        # Add the most common augmentation for remaining images
+        most_common = max(config.items(), key=lambda x: x[1])[0]
+        plan.append(most_common)
+
+    # Shuffle the plan for random distribution
+    random.shuffle(plan)
+
+    return plan[:total_images]
+
+
+def apply_padding_to_original(image: np.ndarray) -> np.ndarray:
+    """
+    Apply random top and right padding to original images.
+
+    Args:
+        image: Input image
+
+    Returns:
+        Image with random top and right padding (0-15px)
+    """
+    # Generate random padding values
+    top_padding = random.randint(0, 15)
+    right_padding = random.randint(0, 15)
+
+    # Apply padding (top, bottom, left, right)
+    # We only add top and right padding, so bottom and left are 0
+    padded_image = cv2.copyMakeBorder(
+        image,
+        top_padding,
+        0,  # top, bottom
+        0,
+        right_padding,  # left, right
+        cv2.BORDER_CONSTANT,
+        value=[255, 255, 255],  # White padding
+    )
+
+    return padded_image
+
+
+def apply_augmentation(
+    image: np.ndarray, aug_type: str
+) -> Tuple[np.ndarray, bool, float]:
+    """
+    Apply a specific augmentation to an image.
+
+    Args:
+        image: Input image
+        aug_type: Type of augmentation to apply
+
+    Returns:
+        Tuple of (augmented_image, success_flag, processing_time_seconds)
+    """
+    start_time = time.time()
+
+    if aug_type == "original":
+        # Apply random top and right padding to original images
+        result = apply_padding_to_original(image)
+        end_time = time.time()
+        return result, True, end_time - start_time
+
+    try:
+        pipeline = get_augmentation_pipeline(aug_type)
+        if pipeline is None:
+            print(f"Warning: Unknown augmentation type '{aug_type}', keeping original")
+            end_time = time.time()
+            return image.copy(), False, end_time - start_time
+
+        augmented = pipeline(image)
+        end_time = time.time()
+        return augmented, True, end_time - start_time
+
+    except Exception as e:
+        print(f"Error applying {aug_type} augmentation: {e}")
+        end_time = time.time()
+        return image.copy(), False, end_time - start_time
+
+
+def process_images(
+    input_folder: str,
+    output_folder: str,
+    config: Dict[str, int],
+    max_samples: int = None,
+):
+    """
+    Process all images in the input folder and create augmented versions.
+
+    Args:
+        input_folder: Path to input image folder
+        output_folder: Path to output folder
+        config: Augmentation configuration
+        max_samples: Maximum number of images to process (None for all)
+    """
+    input_path = Path(input_folder)
+    output_path = Path(output_folder)
+
+    # Get all image files
+    supported_extensions = get_supported_image_extensions()
+    image_files = [
+        f
+        for f in input_path.iterdir()
+        if f.is_file() and f.suffix.lower() in supported_extensions
+    ]
+
+    if not image_files:
+        print(f"No image files found in {input_folder}")
+        return
+
+    # Limit the number of images if max_samples is specified
+    if max_samples is not None and max_samples > 0:
+        if max_samples < len(image_files):
+            print(f"Limiting to {max_samples} images out of {len(image_files)} found")
+            # Shuffle to get a random sample
+            random.shuffle(image_files)
+            image_files = image_files[:max_samples]
         else:
-            return image
+            print(
+                f"max_samples ({max_samples}) is >= total images ({len(image_files)}), processing all images"
+            )
 
-    def apply_perspective(self, image: Union[Image.Image, np.ndarray], intensity: float = 0.5) -> Image.Image:
-        """Apply perspective transformation."""
-        if not CV2_AVAILABLE or not PIL_AVAILABLE:
-            self.logger.warning("OpenCV and PIL required for perspective transformation")
-            return image
-        
-        # Convert to PIL if needed
-        if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        
-        # Convert to OpenCV format
-        cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-        h, w = cv_image.shape[:2]
-        
-        # Calculate perspective points based on intensity
-        max_distortion = min(w, h) * 0.1 * intensity  # Max 10% distortion
-        
-        # Original corner points
-        src_points = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
-        
-        # Randomly distorted corner points
-        dst_points = np.float32([
-            [np.random.uniform(-max_distortion, max_distortion), 
-             np.random.uniform(-max_distortion, max_distortion)],
-            [w + np.random.uniform(-max_distortion, max_distortion), 
-             np.random.uniform(-max_distortion, max_distortion)],
-            [w + np.random.uniform(-max_distortion, max_distortion), 
-             h + np.random.uniform(-max_distortion, max_distortion)],
-            [np.random.uniform(-max_distortion, max_distortion), 
-             h + np.random.uniform(-max_distortion, max_distortion)]
-        ])
-        
-        self.logger.debug(f"Applying perspective: distortion {max_distortion:.2f}")
-        
-        # Apply perspective transformation
-        matrix = cv2.getPerspectiveTransform(src_points, dst_points)
-        transformed = cv2.warpPerspective(cv_image, matrix, (w, h), borderValue=(255, 255, 255))
-        
-        # Convert back to PIL
-        result = cv2.cvtColor(transformed, cv2.COLOR_BGR2RGB)
-        return Image.fromarray(result)
+    print(f"Found {len(image_files)} images to process")
 
-    def apply_elastic(self, image: Union[Image.Image, np.ndarray], intensity: float = 0.5) -> Image.Image:
-        """Apply elastic deformation."""
-        if not CV2_AVAILABLE or not PIL_AVAILABLE:
-            self.logger.warning("OpenCV and PIL required for elastic deformation")
-            return image
-        
-        # Convert to PIL if needed
-        if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        
-        # Convert to numpy
-        img_array = np.array(image)
-        h, w = img_array.shape[:2]
-        
-        # Parameters for elastic deformation based on intensity
-        alpha = 100 * intensity  # Displacement strength
-        sigma = 20 * intensity   # Smoothness of displacement field
-        
-        self.logger.debug(f"Applying elastic deformation: alpha={alpha:.2f}, sigma={sigma:.2f}")
-        
-        # Generate displacement fields
-        dx = np.random.uniform(-1, 1, (h, w)).astype(np.float32) * alpha
-        dy = np.random.uniform(-1, 1, (h, w)).astype(np.float32) * alpha
-        
-        # Smooth the displacement fields
-        dx = cv2.GaussianBlur(dx, (0, 0), sigma)
-        dy = cv2.GaussianBlur(dy, (0, 0), sigma)
-        
-        # Create coordinate grids
-        x, y = np.meshgrid(np.arange(w), np.arange(h))
-        map_x = (x + dx).astype(np.float32)
-        map_y = (y + dy).astype(np.float32)
-        
-        # Apply elastic deformation
-        if len(img_array.shape) == 3:  # Color image
-            deformed = cv2.remap(img_array, map_x, map_y, cv2.INTER_LINEAR, borderValue=(255, 255, 255))
-        else:  # Grayscale image
-            deformed = cv2.remap(img_array, map_x, map_y, cv2.INTER_LINEAR, borderValue=255)
-        
-        return Image.fromarray(deformed)
+    # Generate augmentation plan
+    augmentation_plan = generate_augmentation_plan(len(image_files), config)
 
-    def apply_color_shift(self, image: Union[Image.Image, np.ndarray], intensity: float = 0.5) -> Image.Image:
-        """Apply color shift augmentation."""
-        if not PIL_AVAILABLE:
-            self.logger.warning("PIL not available for color shift")
-            return image
-        
-        # Convert to PIL if needed
-        if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        
-        # Convert to numpy for color manipulation
-        img_array = np.array(image).astype(np.float32)
-        
-        if len(img_array.shape) != 3:  # Skip if not color image
-            return image
-        
-        # Calculate color shift amounts based on intensity
-        max_shift = 30 * intensity  # Max shift of 30 color values
-        
-        # Random shifts for each channel
-        r_shift = np.random.uniform(-max_shift, max_shift)
-        g_shift = np.random.uniform(-max_shift, max_shift)
-        b_shift = np.random.uniform(-max_shift, max_shift)
-        
-        self.logger.debug(f"Applying color shift: R={r_shift:.1f}, G={g_shift:.1f}, B={b_shift:.1f}")
-        
-        # Apply shifts
-        img_array[:, :, 0] += r_shift  # Red channel
-        img_array[:, :, 1] += g_shift  # Green channel
-        img_array[:, :, 2] += b_shift  # Blue channel
-        
-        # Clip values to valid range
-        img_array = np.clip(img_array, 0, 255).astype(np.uint8)
-        
-        return Image.fromarray(img_array)
+    # Print augmentation distribution
+    print("\nAugmentation Distribution:")
+    aug_counts = {}
+    for aug in augmentation_plan:
+        aug_counts[aug] = aug_counts.get(aug, 0) + 1
 
-    def apply_random_augmentation(self, image: Union[Image.Image, np.ndarray], intensity: float = 0.5) -> Image.Image:
-        """Apply a random augmentation from available options."""
-        available_augs = self.get_available_augmentations()
-        if not available_augs:
-            return image
-        
-        aug_type = np.random.choice(available_augs)
-        return self._apply_single_augmentation({"image": image}, aug_type, intensity)["image"]
+    for aug_type, count in sorted(aug_counts.items()):
+        percentage = (count / len(image_files)) * 100
+        print(f"  {aug_type}: {count} images ({percentage:.1f}%)")
 
-    def get_available_augmentations(self) -> List[str]:
-        """Get list of available augmentation types."""
-        return self.available_augmentations
+    # Create output directory
+    output_path.mkdir(parents=True, exist_ok=True)
 
-    def batch_augment_images(
-        self, 
-        images: List[Union[Image.Image, np.ndarray]], 
-        augmentations: List[str],
-        intensity: float = 0.5
-    ) -> List[Image.Image]:
-        """Apply augmentations to a batch of images."""
-        augmented_images = []
-        
-        for image in images:
-            for aug_type in augmentations:
-                try:
-                    if aug_type == AugmentationType.ROTATION.value:
-                        aug_image = self.apply_rotation(image, intensity)
-                    elif aug_type == AugmentationType.SCALING.value:
-                        aug_image = self.apply_scaling(image, intensity)
-                    elif aug_type == AugmentationType.NOISE.value:
-                        aug_image = self.apply_noise(image, intensity)
-                    elif aug_type == AugmentationType.BRIGHTNESS.value:
-                        aug_image = self.apply_brightness(image, intensity)
-                    elif aug_type == AugmentationType.CONTRAST.value:
-                        aug_image = self.apply_contrast(image, intensity)
-                    elif aug_type == AugmentationType.BLUR.value:
-                        aug_image = self.apply_blur(image, intensity)
-                    elif aug_type == AugmentationType.PERSPECTIVE.value:
-                        aug_image = self.apply_perspective(image, intensity)
-                    elif aug_type == AugmentationType.ELASTIC.value:
-                        aug_image = self.apply_elastic(image, intensity)
-                    elif aug_type == AugmentationType.COLOR_SHIFT.value:
-                        aug_image = self.apply_color_shift(image, intensity)
-                    else:
-                        aug_image = image
-                    
-                    augmented_images.append(aug_image)
-                except Exception as e:
-                    self.logger.error(f"Failed to apply {aug_type} to image: {e}")
-                    augmented_images.append(image)  # Add original if augmentation fails
-        
-        return augmented_images
+    # Process each image
+    successful_augmentations = 0
+    failed_augmentations = 0
+    timing_stats = {}  # Track timing for each augmentation type
+
+    print("\nProcessing images...")
+
+    with tqdm(total=len(image_files), desc="Augmenting images") as pbar:
+        for i, image_file in enumerate(image_files):
+            pbar.set_description(f"Processing {image_file.name}")
+
+            # Load image
+            image = load_image(str(image_file))
+            if image is None:
+                pbar.update(1)
+                failed_augmentations += 1
+                continue
+
+            # Get augmentation type for this image
+            aug_type = augmentation_plan[i]
+
+            # Apply augmentation with timing
+            augmented_image, success, processing_time = apply_augmentation(
+                image, aug_type
+            )
+
+            # Track timing statistics
+            if aug_type not in timing_stats:
+                timing_stats[aug_type] = []
+            timing_stats[aug_type].append(processing_time)
+
+            # Generate output filename with augmentation suffix
+            file_stem = image_file.stem
+            file_extension = image_file.suffix
+            output_filename = f"{file_stem}{file_extension}"
+
+            output_file_path = output_path / output_filename
+
+            # Save augmented image
+            if save_image(augmented_image, str(output_file_path)):
+                if success:
+                    successful_augmentations += 1
+                else:
+                    # Still count as successful if image was saved (even if it's original)
+                    successful_augmentations += 1
+            else:
+                failed_augmentations += 1
+
+            pbar.update(1)
+
+    # Print processing results
+    print("\nProcessing complete!")
+    print(
+        f"Successfully processed: {successful_augmentations}/{len(image_files)} images"
+    )
+    print(f"Failed: {failed_augmentations}/{len(image_files)} images")
+    print(f"Output saved to: {output_folder}")
+
+    # Print timing report
+    print("\n" + "=" * 80)
+    print("TIMING REPORT")
+    print("=" * 80)
+
+    total_time = 0
+    for aug_type, times in sorted(timing_stats.items()):
+        if times:  # Only if we have timing data
+            avg_time = sum(times) / len(times)
+            total_aug_time = sum(times)
+            total_time += total_aug_time
+
+            print(
+                f"{aug_type:25} | Count: {len(times):3} | "
+                f"Avg: {avg_time:6.3f}s | Total: {total_aug_time:6.2f}s | "
+                f"Rate: {len(times) / total_aug_time:5.1f} img/s"
+            )
+
+    print("-" * 80)
+    print(
+        f"{'TOTAL':25} | Count: {successful_augmentations:3} | "
+        f"Total: {total_time:6.2f}s | Rate: {successful_augmentations / total_time:5.1f} img/s"
+    )
+    print("=" * 80)
+
+
+def main():
+    """Main function to handle command line arguments and run the augmentation process."""
+    parser = argparse.ArgumentParser(
+        description="Apply document augmentations to images with configurable ratios",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"""
+Examples:
+  python augmentation.py --input_folder ./images --output_folder ./augmented
+  python augmentation.py -i ./data/images -o ./data/augmented --seed 42
+  python augmentation.py -i ./images -o ./augmented --max_samples 100
+  
+Available Augmentations ({len(PERFORMANCE_DATA)} total):
+  {", ".join(sorted(PERFORMANCE_DATA.keys()))}
+  
+Current Distribution (out of 1000):
+  - original: 300 (30%) - kept as original with random top/right padding (0-15px)
+  - Each augmentation: ~{700 // len(PERFORMANCE_DATA)} (~{(700 // len(PERFORMANCE_DATA)) / 10:.1f}%) - equally distributed
+  
+Note: All available augmentations are equally distributed. Original images get 30% 
+with random top and right padding of 0-15 pixels.
+
+Use --max_samples for testing with a limited number of images (e.g., 100).
+        """,
+    )
+
+    parser.add_argument(
+        "-i",
+        "--input_folder",
+        type=str,
+        required=True,
+        help="Path to input folder containing images",
+    )
+
+    parser.add_argument(
+        "-o",
+        "--output_folder",
+        type=str,
+        required=True,
+        help="Path to output folder for augmented images",
+    )
+
+    parser.add_argument(
+        "--seed", type=int, default=None, help="Random seed for reproducible results"
+    )
+
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to custom configuration file (JSON format with augmentation ratios)",
+    )
+
+    parser.add_argument(
+        "--dry_run",
+        action="store_true",
+        help="Show augmentation plan without processing images",
+    )
+
+    parser.add_argument(
+        "--max_samples",
+        type=int,
+        default=None,
+        help="Maximum number of images to process (useful for testing, e.g., 100)",
+    )
+
+    args = parser.parse_args()
+
+    # Set random seed if provided
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        print(f"Using random seed: {args.seed}")
+
+    # Use default configuration
+    config = AUGMENTATION_CONFIG
+
+    # Load custom configuration if provided
+    if args.config:
+        try:
+            import json
+
+            with open(args.config, "r") as f:
+                custom_config = json.load(f)
+
+            # Validate that ratios sum to 1000
+            if sum(custom_config.values()) != 1000:
+                print(
+                    f"Warning: Custom config ratios sum to {sum(custom_config.values())}, should be 1000"
+                )
+
+            config = custom_config
+            print(f"Using custom configuration from: {args.config}")
+        except Exception as e:
+            print(f"Error loading custom config: {e}")
+            print("Using default configuration")
+
+    # Verify input folder exists
+    if not os.path.exists(args.input_folder):
+        print(f"Error: Input folder '{args.input_folder}' does not exist")
+        return
+
+    if args.dry_run:
+        # Show what would be done without actually processing
+        input_path = Path(args.input_folder)
+        supported_extensions = get_supported_image_extensions()
+        image_files = [
+            f
+            for f in input_path.iterdir()
+            if f.is_file() and f.suffix.lower() in supported_extensions
+        ]
+
+        if not image_files:
+            print(f"No image files found in {args.input_folder}")
+            return
+
+        # Limit the number of images if max_samples is specified
+        if args.max_samples is not None and args.max_samples > 0:
+            if args.max_samples < len(image_files):
+                print(
+                    f"Limiting to {args.max_samples} images out of {len(image_files)} found for dry run"
+                )
+                # Shuffle to get a random sample
+                random.shuffle(image_files)
+                image_files = image_files[: args.max_samples]
+            else:
+                print(
+                    f"max_samples ({args.max_samples}) is >= total images ({len(image_files)}), showing all images"
+                )
+
+        plan = generate_augmentation_plan(len(image_files), config)
+
+        print(f"Dry run mode - would process {len(image_files)} images")
+        print("Augmentation distribution:")
+
+        aug_counts = {}
+        for aug in plan:
+            aug_counts[aug] = aug_counts.get(aug, 0) + 1
+
+        for aug_type, count in sorted(aug_counts.items()):
+            percentage = (count / len(image_files)) * 100
+            print(f"  {aug_type}: {count} images ({percentage:.1f}%)")
+    else:
+        # Process images
+        process_images(args.input_folder, args.output_folder, config, args.max_samples)
+
+
+if __name__ == "__main__":
+    main()
+
+
+# python augmentation.py --input_folder ./datasets/nayana_sections_en_en_para/images --output_folder ./datasets/nayana_sections_en_en_para_augment/images --max_samples 1000
+
+# python augmentation.py --input_folder ./datasets/nayana_sections_kn_kn_para/images --output_folder ./datasets/nayana_sections_kn_kn_para_augment/images --max_samples 1000

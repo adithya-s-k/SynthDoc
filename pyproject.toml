@@ -59,6 +59,8 @@ dependencies = [
     "pymupdf>=1.26.3",
     "google-genai>=1.25.0",
     "deep-translator>=1.11.4",
+    # Document augmentation
+    "augraphy>=8.2.0",
 ]
 
 [project.optional-dependencies]
