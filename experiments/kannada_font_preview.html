@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="kn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kannada Font Preview</title>
+    <style>
+        @font-face {
+            font-family: 'Benne';
+            src: url('../synthdoc/fonts/kn/Benne-Regular.ttf') format('truetype');
+        }
+        @font-face {
+            font-family: 'TiroKannadaCustom';
+            src: url('../synthdoc/fonts/kn/TiroKannada-Regular_custom.ttf') format('truetype');
+        }
+        @font-face {
+            font-family: 'AnekKannada';
+            src: url('../synthdoc/fonts/kn/AnekKannada-VariableFont_wdth,wght.ttf') format('truetype');
+        }
+        @font-face {
+            font-family: 'TiroKannada';
+            src: url('../synthdoc/fonts/kn/TiroKannada-Regular.ttf') format('truetype');
+        }
+        @font-face {
+            font-family: 'TiroKannadaItalic';
+            src: url('../synthdoc/fonts/kn/TiroKannada-Italic.ttf') format('truetype');
+        }
+        @font-face {
+            font-family: 'BalooTamma2';
+            src: url('../synthdoc/fonts/kn/BalooTamma2-VariableFont_wght.ttf') format('truetype');
+        }
+        @font-face {
+            font-family: 'Hubballi';
+            src: url('../synthdoc/fonts/kn/Hubballi-Regular.ttf') format('truetype');
+        }
+        @font-face {
+            font-family: 'PadyakkeExpandedOne';
+            src: url('../synthdoc/fonts/kn/PadyakkeExpandedOne-Regular.ttf') format('truetype');
+        }
+        @font-face {
+            font-family: 'NotoSansKannada';
+            src: url('../synthdoc/fonts/kn/NotoSansKannada-Regular.ttf') format('truetype');
+        }
+        @font-face {
+            font-family: 'NotoSerifKannada';
+            src: url('../synthdoc/fonts/kn/NotoSerifKannada-Regular.ttf') format('truetype');
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .font-sample {
+            background: white;
+            margin-bottom: 20px;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .font-name {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .sample-text {
+            font-size: 28px;
+            line-height: 1.6;
+            color: #333;
+        }
+
+        .sentence-selector {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .sentence-selector select {
+            padding: 10px 20px;
+            font-size: 16px;
+            border-radius: 5px;
+            border: 2px solid #ddd;
+            background: white;
+            cursor: pointer;
+        }
+
+        .sentence-selector select:hover {
+            border-color: #999;
+        }
+
+        .input-section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+
+        .input-section textarea {
+            width: 100%;
+            padding: 15px;
+            font-size: 18px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            resize: vertical;
+            min-height: 80px;
+            box-sizing: border-box;
+            font-family: 'NotoSansKannada', sans-serif;
+        }
+
+        .input-section textarea:focus {
+            outline: none;
+            border-color: #4CAF50;
+        }
+
+        .input-section button {
+            margin-top: 10px;
+            padding: 12px 30px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .input-section button:hover {
+            background-color: #45a049;
+        }
+
+        .sentence-display {
+            margin-top: 15px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-left: 4px solid #4CAF50;
+            border-radius: 4px;
+            font-size: 16px;
+            line-height: 1.6;
+        }
+
+        .sentence-display strong {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+        }
+
+        .unicode-analysis {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+
+        .unicode-analysis h2 {
+            font-size: 18px;
+            color: #333;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 8px;
+        }
+
+        .character-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .character-card {
+            background: #f9f9f9;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+            transition: all 0.2s;
+        }
+
+        .character-card:hover {
+            border-color: #4CAF50;
+            box-shadow: 0 2px 8px rgba(76, 175, 80, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .char-display {
+            font-family: 'NotoSansKannada';
+            font-size: 48px;
+            margin-bottom: 8px;
+            color: #333;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .char-unicode {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 4px;
+        }
+
+        .char-name {
+            font-size: 10px;
+            color: #888;
+            word-break: break-word;
+            line-height: 1.3;
+        }
+
+        .unicode-summary {
+            background: #f0f7f0;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        .unicode-summary strong {
+            color: #2e7d32;
+        }
+
+        .grapheme-section {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #ddd;
+        }
+
+        .grapheme-cluster {
+            display: inline-block;
+            margin: 5px;
+            padding: 8px 12px;
+            background: #e8f5e9;
+            border: 1px solid #4CAF50;
+            border-radius: 5px;
+            font-family: 'NotoSansKannada';
+            font-size: 24px;
+        }
+
+        .codepoint-list {
+            margin-top: 10px;
+            padding: 10px;
+            background: #fff;
+            border-left: 3px solid #4CAF50;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.8;
+            color: #555;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>ಕನ್ನಡ ಫಾಂಟ್ ಪೂರ್ವವೀಕ್ಷಣೆ</h1>
+    <div class="subtitle">Kannada Font Preview</div>
+
+    <div class="input-section">
+        <textarea id="customText" placeholder="ನಿಮ್ಮ ಕನ್ನಡ ಪಠ್ಯವನ್ನು ಇಲ್ಲಿ ಟೈಪ್ ಮಾಡಿ... (Type your Kannada text here...)"></textarea>
+        <button onclick="updateFromCustomText()">Update Preview</button>
+    </div>
+
+    <div class="sentence-selector">
+        <select id="sentenceSelect" onchange="changeSentence()">
+            <option value="custom">Custom Text</option>
+            <option value="0">Example 1</option>
+            <option value="1">Example 2</option>
+            <option value="2">Example 3</option>
+            <option value="3">Example 4</option>
+            <option value="4">Example 5</option>
+            <option value="5">Example 6 (Long)</option>
+            <option value="6">Example 7 (Long)</option>
+            <option value="7">Example 8 (Numbers & Symbols)</option>
+        </select>
+        <div id="currentSentence" class="sentence-display"></div>
+    </div>
+
+    <div id="unicodeAnalysis" class="unicode-analysis"></div>
+
+    <div id="fontContainer"></div>
+
+    <script>
+        const fonts = [
+            { name: 'Benne', family: 'Benne' },
+            { name: 'Anek Kannada', family: 'AnekKannada' },
+            { name: 'Tiro Kannada Custom', family: 'TiroKannadaCustom' },
+            { name: 'Tiro Kannada', family: 'TiroKannada' },
+            { name: 'Tiro Kannada Italic', family: 'TiroKannadaItalic' },
+            { name: 'Baloo Tamma 2', family: 'BalooTamma2' },
+            { name: 'Hubballi', family: 'Hubballi' },
+            { name: 'Padyakke Expanded One', family: 'PadyakkeExpandedOne' },
+            { name: 'Noto Sans Kannada', family: 'NotoSansKannada' },
+            { name: 'Noto Serif Kannada', family: 'NotoSerifKannada' }
+        ];
+
+        let customText = '';
+
+        const sentences = [
+            'ಕರ್ನಾಟಕವು ಭಾರತದ ದಕ್ಷಿಣ ಪಶ್ಚಿಮ ಭಾಗದಲ್ಲಿರುವ ಒಂದು ರಾಜ್ಯವಾಗಿದೆ.',
+            'ಬೆಂಗಳೂರು ಕರ್ನಾಟಕದ ರಾಜಧಾನಿಯಾಗಿದ್ದು, ಭಾರತದ ಐಟಿ ರಾಜಧಾನಿ ಎಂದು ಕರೆಯಲಾಗುತ್ತದೆ.',
+            'ಕನ್ನಡ ಸಾಹಿತ್ಯವು ಸುಮಾರು ೧೫೦೦ ವರ್ಷಗಳಷ್ಟು ಪ್ರಾಚೀನವಾದ ಇತಿಹಾಸವನ್ನು ಹೊಂದಿದೆ.',
+            'ಜೋಗ ಜಲಪಾತವು ಭಾರತದ ಎರಡನೇ ಅತಿ ಎತ್ತರದ ಜಲಪಾತವಾಗಿದೆ.',
+            'ಮೈಸೂರು ಅರಮನೆಯು ವಿಶ್ವದ ಅತ್ಯಂತ ಭವ್ಯವಾದ ಅರಮನೆಗಳಲ್ಲಿ ಒಂದಾಗಿದೆ.',
+            'ಕರ್ನಾಟಕದ ಸಂಸ್ಕೃತಿಯು ವೈವಿಧ್ಯಮಯವಾಗಿದ್ದು, ಇಲ್ಲಿನ ಜನರು ವಿವಿಧ ಹಬ್ಬಗಳನ್ನು ಆಚರಿಸುತ್ತಾರೆ. ಯಕ್ಷಗಾನ, ಡೊಳ್ಳು ಕುಣಿತ, ಕಮ್ಮಟ ಮತ್ತು ಸುಗ್ಗಿ ನೃತ್ಯಗಳು ಇಲ್ಲಿನ ಪ್ರಮುಖ ಲೋಕ ಕಲೆಗಳಾಗಿವೆ.',
+            'ಹಂಪಿ, ಬಾದಾಮಿ, ಐಹೊಳೆ, ಪಟ್ಟದಕಲ್ಲು ಮತ್ತು ಬೆಳೂರು ಗಂಭೀರವಾದ ಐತಿಹಾಸಿಕ ಮಹತ್ವವನ್ನು ಹೊಂದಿರುವ ಸ್ಥಳಗಳಾಗಿವೆ. ಈ ಸ್ಮಾರಕಗಳು ಪ್ರಾಚೀನ ಭಾರತೀಯ ವಾಸ್ತುಶಿಲ್ಪದ ಅದ್ಭುತ ಉದಾಹರಣೆಗಳಾಗಿವೆ ಮತ್ತು ವಿಶ್ವದಾದ್ಯಂತದ ಪ್ರವಾಸಿಗರನ್ನು ಆಕರ್ಷಿಸುತ್ತವೆ.',
+            'ಅಕ್ಷರಗಳು: ಅ ಆ ಇ ಈ ಉ ಊ ಋ ೠ ಎ ಏ ಐ ಒ ಓ ಔ ಅಂ ಅಃ | ಸಂಖ್ಯೆಗಳು: ೧೨೩೪೫೬೭೮೯೦ | ಚಿಹ್ನೆಗಳು: ।॥₹!@#$%^&*()_+-={}[]|:;"<>?,./'
+        ];
+
+        function getUnicodeName(codePoint) {
+            // Simplified Unicode names for Kannada characters
+            const kannadaNames = {
+                0x0C80: 'KANNADA SIGN SPACING CANDRABINDU',
+                0x0C81: 'KANNADA SIGN CANDRABINDU',
+                0x0C82: 'KANNADA SIGN ANUSVARA',
+                0x0C83: 'KANNADA SIGN VISARGA',
+                0x0C85: 'KANNADA LETTER A',
+                0x0C86: 'KANNADA LETTER AA',
+                0x0C87: 'KANNADA LETTER I',
+                0x0C88: 'KANNADA LETTER II',
+                0x0C89: 'KANNADA LETTER U',
+                0x0C8A: 'KANNADA LETTER UU',
+                0x0C8B: 'KANNADA LETTER VOCALIC R',
+                0x0C8C: 'KANNADA LETTER VOCALIC L',
+                0x0C8E: 'KANNADA LETTER E',
+                0x0C8F: 'KANNADA LETTER EE',
+                0x0C90: 'KANNADA LETTER AI',
+                0x0C92: 'KANNADA LETTER O',
+                0x0C93: 'KANNADA LETTER OO',
+                0x0C94: 'KANNADA LETTER AU',
+                0x0C95: 'KANNADA LETTER KA',
+                0x0C96: 'KANNADA LETTER KHA',
+                0x0C97: 'KANNADA LETTER GA',
+                0x0C98: 'KANNADA LETTER GHA',
+                0x0C99: 'KANNADA LETTER NGA',
+                0x0C9A: 'KANNADA LETTER CA',
+                0x0C9B: 'KANNADA LETTER CHA',
+                0x0C9C: 'KANNADA LETTER JA',
+                0x0C9D: 'KANNADA LETTER JHA',
+                0x0C9E: 'KANNADA LETTER NYA',
+                0x0C9F: 'KANNADA LETTER TTA',
+                0x0CA0: 'KANNADA LETTER TTHA',
+                0x0CA1: 'KANNADA LETTER DDA',
+                0x0CA2: 'KANNADA LETTER DDHA',
+                0x0CA3: 'KANNADA LETTER NNA',
+                0x0CA4: 'KANNADA LETTER TA',
+                0x0CA5: 'KANNADA LETTER THA',
+                0x0CA6: 'KANNADA LETTER DA',
+                0x0CA7: 'KANNADA LETTER DHA',
+                0x0CA8: 'KANNADA LETTER NA',
+                0x0CA9: 'KANNADA LETTER NNNA',
+                0x0CAA: 'KANNADA LETTER PA',
+                0x0CAB: 'KANNADA LETTER PHA',
+                0x0CAC: 'KANNADA LETTER BA',
+                0x0CAD: 'KANNADA LETTER BHA',
+                0x0CAE: 'KANNADA LETTER MA',
+                0x0CAF: 'KANNADA LETTER YA',
+                0x0CB0: 'KANNADA LETTER RA',
+                0x0CB1: 'KANNADA LETTER RRA',
+                0x0CB2: 'KANNADA LETTER LA',
+                0x0CB3: 'KANNADA LETTER LLA',
+                0x0CB5: 'KANNADA LETTER VA',
+                0x0CB6: 'KANNADA LETTER SHA',
+                0x0CB7: 'KANNADA LETTER SSA',
+                0x0CB8: 'KANNADA LETTER SA',
+                0x0CB9: 'KANNADA LETTER HA',
+                0x0CBC: 'KANNADA SIGN NUKTA',
+                0x0CBD: 'KANNADA SIGN AVAGRAHA',
+                0x0CBE: 'KANNADA VOWEL SIGN AA',
+                0x0CBF: 'KANNADA VOWEL SIGN I',
+                0x0CC0: 'KANNADA VOWEL SIGN II',
+                0x0CC1: 'KANNADA VOWEL SIGN U',
+                0x0CC2: 'KANNADA VOWEL SIGN UU',
+                0x0CC3: 'KANNADA VOWEL SIGN VOCALIC R',
+                0x0CC4: 'KANNADA VOWEL SIGN VOCALIC RR',
+                0x0CC6: 'KANNADA VOWEL SIGN E',
+                0x0CC7: 'KANNADA VOWEL SIGN EE',
+                0x0CC8: 'KANNADA VOWEL SIGN AI',
+                0x0CCA: 'KANNADA VOWEL SIGN O',
+                0x0CCB: 'KANNADA VOWEL SIGN OO',
+                0x0CCC: 'KANNADA VOWEL SIGN AU',
+                0x0CCD: 'KANNADA SIGN VIRAMA',
+                0x0CD5: 'KANNADA LENGTH MARK',
+                0x0CD6: 'KANNADA AI LENGTH MARK',
+                0x0CDD: 'KANNADA LETTER NAKAARA POLLU',
+                0x0CDE: 'KANNADA LETTER FA',
+                0x0CE0: 'KANNADA LETTER VOCALIC RR',
+                0x0CE1: 'KANNADA LETTER VOCALIC LL',
+                0x0CE2: 'KANNADA VOWEL SIGN VOCALIC L',
+                0x0CE3: 'KANNADA VOWEL SIGN VOCALIC LL',
+                0x0CE6: 'KANNADA DIGIT ZERO',
+                0x0CE7: 'KANNADA DIGIT ONE',
+                0x0CE8: 'KANNADA DIGIT TWO',
+                0x0CE9: 'KANNADA DIGIT THREE',
+                0x0CEA: 'KANNADA DIGIT FOUR',
+                0x0CEB: 'KANNADA DIGIT FIVE',
+                0x0CEC: 'KANNADA DIGIT SIX',
+                0x0CED: 'KANNADA DIGIT SEVEN',
+                0x0CEE: 'KANNADA DIGIT EIGHT',
+                0x0CEF: 'KANNADA DIGIT NINE',
+                0x20B9: 'INDIAN RUPEE SIGN',
+                0x0964: 'DEVANAGARI DANDA',
+                0x0965: 'DEVANAGARI DOUBLE DANDA',
+            };
+
+            if (kannadaNames[codePoint]) {
+                return kannadaNames[codePoint];
+            }
+
+            // For other characters
+            if (codePoint >= 0x0C00 && codePoint <= 0x0C7F) {
+                return `KANNADA CHARACTER`;
+            }
+            if (codePoint >= 0x0020 && codePoint <= 0x007E) {
+                return `ASCII: ${String.fromCodePoint(codePoint)}`;
+            }
+            return `UNICODE CHARACTER`;
+        }
+
+        function analyzeUnicode(text) {
+            const analysisDiv = document.getElementById('unicodeAnalysis');
+
+            if (!text) {
+                analysisDiv.innerHTML = '';
+                return;
+            }
+
+            // Get individual code points
+            const codePoints = Array.from(text).map(char => char.codePointAt(0));
+            const uniqueCodePoints = [...new Set(codePoints)];
+
+            // Count character types
+            let kannadaCount = 0;
+            let numberCount = 0;
+            let spaceCount = 0;
+            let otherCount = 0;
+
+            codePoints.forEach(cp => {
+                if (cp >= 0x0C80 && cp <= 0x0CFF) kannadaCount++;
+                else if ((cp >= 0x0030 && cp <= 0x0039) || (cp >= 0x0CE6 && cp <= 0x0CEF)) numberCount++;
+                else if (cp === 0x0020) spaceCount++;
+                else otherCount++;
+            });
+
+            // Create summary
+            let html = '<h2>Unicode Analysis (Noto Sans Kannada)</h2>';
+            html += '<div class="unicode-summary">';
+            html += `<strong>Total Characters:</strong> ${codePoints.length} | `;
+            html += `<strong>Unique:</strong> ${uniqueCodePoints.length} | `;
+            html += `<strong>Kannada:</strong> ${kannadaCount} | `;
+            html += `<strong>Numbers:</strong> ${numberCount} | `;
+            html += `<strong>Spaces:</strong> ${spaceCount} | `;
+            html += `<strong>Other:</strong> ${otherCount}`;
+            html += '</div>';
+
+            // Grapheme clusters
+            const graphemes = Array.from(new Intl.Segmenter('kn', { granularity: 'grapheme' }).segment(text));
+            html += '<div class="grapheme-section">';
+            html += '<h3 style="font-size: 16px; margin-bottom: 10px;">Grapheme Clusters (Visual Units):</h3>';
+            html += '<div>';
+            graphemes.forEach((g, i) => {
+                html += `<span class="grapheme-cluster" title="Cluster ${i + 1}: ${g.segment}">${g.segment}</span>`;
+            });
+            html += '</div></div>';
+
+            // Character breakdown
+            html += '<h3 style="font-size: 16px; margin: 20px 0 10px 0;">Individual Unicode Characters:</h3>';
+            html += '<div class="character-grid">';
+
+            Array.from(text).forEach((char, index) => {
+                const codePoint = char.codePointAt(0);
+                const hex = codePoint.toString(16).toUpperCase().padStart(4, '0');
+                const name = getUnicodeName(codePoint);
+
+                html += `<div class="character-card">`;
+                html += `<div class="char-display">${char}</div>`;
+                html += `<div class="char-unicode">U+${hex}</div>`;
+                html += `<div class="char-name">${name}</div>`;
+                html += `</div>`;
+            });
+
+            html += '</div>';
+
+            // Code point list
+            html += '<h3 style="font-size: 16px; margin: 20px 0 10px 0;">Complete Code Point Sequence:</h3>';
+            html += '<div class="codepoint-list">';
+            codePoints.forEach((cp, i) => {
+                const hex = cp.toString(16).toUpperCase().padStart(4, '0');
+                const char = String.fromCodePoint(cp);
+                const name = getUnicodeName(cp);
+                html += `${i + 1}. U+${hex} → '${char}' → ${name}<br>`;
+            });
+            html += '</div>';
+
+            analysisDiv.innerHTML = html;
+        }
+
+        function createFontSamples(text) {
+            const container = document.getElementById('fontContainer');
+            const display = document.getElementById('currentSentence');
+
+            container.innerHTML = '';
+            display.innerHTML = `<strong>Current Text:</strong> ${text}`;
+
+            // Generate Unicode analysis
+            analyzeUnicode(text);
+
+            fonts.forEach(font => {
+                const sampleDiv = document.createElement('div');
+                sampleDiv.className = 'font-sample';
+
+                const nameDiv = document.createElement('div');
+                nameDiv.className = 'font-name';
+                nameDiv.textContent = font.name;
+
+                const textDiv = document.createElement('div');
+                textDiv.className = 'sample-text';
+                textDiv.style.fontFamily = font.family;
+                textDiv.textContent = text;
+
+                sampleDiv.appendChild(nameDiv);
+                sampleDiv.appendChild(textDiv);
+                container.appendChild(sampleDiv);
+            });
+        }
+
+        function changeSentence() {
+            const selectedIndex = document.getElementById('sentenceSelect').value;
+
+            if (selectedIndex === 'custom') {
+                const text = customText || 'ಕನ್ನಡ ಪಠ್ಯವನ್ನು ಟೈಪ್ ಮಾಡಿ...';
+                createFontSamples(text);
+            } else {
+                createFontSamples(sentences[selectedIndex]);
+            }
+        }
+
+        function updateFromCustomText() {
+            const textarea = document.getElementById('customText');
+            const text = textarea.value.trim();
+
+            if (text) {
+                customText = text;
+                document.getElementById('sentenceSelect').value = 'custom';
+                createFontSamples(text);
+            } else {
+                alert('Please enter some text first!');
+            }
+        }
+
+        // Allow Enter key in textarea to update preview
+        document.addEventListener('DOMContentLoaded', function() {
+            const textarea = document.getElementById('customText');
+            textarea.addEventListener('keydown', function(e) {
+                if (e.ctrlKey && e.key === 'Enter') {
+                    updateFromCustomText();
+                }
+            });
+        });
+
+        // Initialize with first example sentence
+        createFontSamples(sentences[0]);
+    </script>
+</body>
+</html>
